@@ -109,6 +109,53 @@ export default function App() {
   const [ledVermelhoRedoHistory, setLedVermelhoRedoHistory] = useState<{ points: { x: number, y: number }[], color: string }[][]>([]);
   const [mousePos, setMousePos] = useState<{ x: number, y: number, clientX: number, clientY: number } | null>(null);
 
+  // Dynamic Scales Calculation
+  const chartScales = useMemo(() => {
+    const calcScale = (val: number, def: number, divisions: number) => {
+      const currentMax = Math.max(val, def);
+      const s = currentMax / divisions;
+      const exponent = Math.floor(Math.log10(s));
+      const fraction = s / Math.pow(10, exponent);
+      let niceFraction;
+      if (fraction <= 1) niceFraction = 1;
+      else if (fraction <= 2) niceFraction = 2;
+      else if (fraction <= 2.5) niceFraction = 2.5;
+      else if (fraction <= 5) niceFraction = 5;
+      else niceFraction = 10;
+      
+      const majorStep = niceFraction * Math.pow(10, exponent);
+      const niceMax = majorStep * divisions;
+      
+      const ticks = [];
+      for (let i = 0; i <= divisions; i++) {
+        ticks.push(Number((i * majorStep).toFixed(4)));
+      }
+      
+      const minorTicks = [];
+      const minorStep = majorStep / 5;
+      for (let i = 0; i <= divisions * 5; i++) {
+        minorTicks.push(Number((i * minorStep).toFixed(4)));
+      }
+      
+      return { max: niceMax, ticks, minorTicks };
+    };
+
+    const lampX = calcScale(Math.max(...lampData.map(d => d.voltage || 0), 0), 1.2, 6);
+    const lampY = calcScale(Math.max(...lampData.map(d => d.current || 0), 0), 350, 7);
+    
+    const ledRedX = calcScale(Math.max(...ledVermelhoData.map(d => d.voltage || 0), 0), 6, 6);
+    const ledRedY = calcScale(Math.max(...ledVermelhoData.map(d => d.current || 0), 0), 40, 4);
+    
+    const ledGreenX = calcScale(Math.max(...ledVerdeData.map(d => d.voltage || 0), 0), 3, 6);
+    const ledGreenY = calcScale(Math.max(...ledVerdeData.map(d => d.current || 0), 0), 32, 4);
+
+    return {
+      lampada: { x: lampX, y: lampY },
+      led_vermelho: { x: ledRedX, y: ledRedY },
+      led_verde: { x: ledGreenX, y: ledGreenY }
+    };
+  }, [lampData, ledVermelhoData, ledVerdeData]);
+
   // Analysis text
   const [analysisText, setAnalysisText] = useState('');
   const [ledUnifiedQuestions, setLedUnifiedQuestions] = useState({ q1: '', q2: '' });
@@ -158,8 +205,9 @@ export default function App() {
       clientY = e.clientY;
     }
 
-    const maxX = activeTab === 'lampada' ? 1.2 : (activeTab === 'led_vermelho' ? 6 : 3);
-    const maxY = activeTab === 'lampada' ? 350 : (activeTab === 'led_vermelho' ? 40 : 32);
+    const currentScale = chartScales[activeTab === 'lampada' ? 'lampada' : (activeTab === 'led_vermelho' ? 'led_vermelho' : 'led_verde')];
+    const maxX = currentScale.x.max;
+    const maxY = currentScale.y.max;
     
     const xRaw = ((clientX - rect.left - paddingLeft) / width) * maxX;
     const yRaw = maxY - ((clientY - rect.top - paddingTop) / height) * maxY;
@@ -933,7 +981,7 @@ export default function App() {
                 className="flex items-center gap-2 px-6 py-3.5 bg-blue-600 text-white text-xs font-black uppercase tracking-widest rounded-2xl hover:bg-blue-700 transition-all shadow-xl shadow-blue-200 active:scale-95"
               >
                 <Plus size={18} />
-                Adicionar Linha
+                Adicionar Ponto
               </button>
             </div>
 
@@ -1075,43 +1123,26 @@ export default function App() {
           <div className="h-[500px] md:h-[700px] bg-white rounded-3xl border border-slate-100 relative overflow-hidden cursor-crosshair shadow-inner group">
             <ResponsiveContainer width="100%" height="100%" key={activeTab}>
               <ScatterChart margin={{ top: 40, right: 40, left: 20, bottom: 40 }}>
-                {/* Millimeter Paper Grid - Minor Lines (Faint) */}
+                {/* Millimeter Paper Grid */}
                 {(() => {
-                  const minorX = [];
-                  const minorY = [];
-                  if (activeTab === 'lampada') {
-                    for (let x = 0; x <= 1.2; x += 0.04) minorX.push(x);
-                    for (let y = 0; y <= 350; y += 10) minorY.push(y);
-                  } else if (activeTab === 'led_vermelho') {
-                    for (let x = 0; x <= 6; x += 0.2) minorX.push(x);
-                    for (let y = 0; y <= 40; y += 2) minorY.push(y);
-                  } else {
-                    for (let x = 0; x <= 3; x += 0.1) minorX.push(x);
-                    for (let y = 0; y <= 32; y += 2) minorY.push(y);
-                  }
+                  const currentScale = chartScales[activeTab];
                   return (
                     <>
-                      {minorX.map(x => <ReferenceLine key={`mx-${x}`} x={x} stroke="#f1f5f9" strokeWidth={0.5} isAnimationActive={false} />)}
-                      {minorY.map(y => <ReferenceLine key={`my-${y}`} y={y} stroke="#f1f5f9" strokeWidth={0.5} isAnimationActive={false} />)}
+                      {currentScale.x.minorTicks.map(x => <ReferenceLine key={`mx-${x}`} x={x} stroke="#f1f5f9" strokeWidth={0.5} isAnimationActive={false} />)}
+                      {currentScale.y.minorTicks.map(y => <ReferenceLine key={`my-${y}`} y={y} stroke="#f1f5f9" strokeWidth={0.5} isAnimationActive={false} />)}
+                      {currentScale.x.ticks.map(v => <ReferenceLine key={`v-${v}`} x={v} stroke="#94a3b8" strokeWidth={1} isAnimationActive={false} />)}
+                      {currentScale.y.ticks.map(h => <ReferenceLine key={`h-${h}`} y={h} stroke="#94a3b8" strokeWidth={1} isAnimationActive={false} />)}
                     </>
                   );
                 })()}
-
-                {/* Major Grid Lines (Solid) */}
-                {(activeTab === 'lampada' ? [0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2] : (activeTab === 'led_vermelho' ? [0, 1, 2, 3, 4, 5, 6] : [0, 0.5, 1, 1.5, 2, 2.5, 3])).map(v => (
-                  <ReferenceLine key={`v-${v}`} x={v} stroke="#94a3b8" strokeWidth={1} isAnimationActive={false} />
-                ))}
-                {(activeTab === 'lampada' ? [0, 50, 100, 150, 200, 250, 300, 350] : (activeTab === 'led_vermelho' ? [0, 10, 20, 30, 40] : [0, 8, 16, 24, 32])).map(h => (
-                  <ReferenceLine key={`h-${h}`} y={h} stroke="#94a3b8" strokeWidth={1} isAnimationActive={false} />
-                ))}
                 
                 <XAxis 
                   type="number" 
                   dataKey="x" 
                   name="Tensão" 
                   unit="" 
-                  domain={[0, activeTab === 'lampada' ? 1.2 : (activeTab === 'led_vermelho' ? 6 : 3)]} 
-                  ticks={activeTab === 'lampada' ? [0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2] : (activeTab === 'led_vermelho' ? [0, 1, 2, 3, 4, 5, 6] : [0, 0.5, 1, 1.5, 2, 2.5, 3])}
+                  domain={[0, chartScales[activeTab].x.max]} 
+                  ticks={chartScales[activeTab].x.ticks}
                   stroke="#000000"
                   fontSize={14}
                   fontWeight="900"
@@ -1126,8 +1157,8 @@ export default function App() {
                   dataKey="y" 
                   name="corrente" 
                   unit="" 
-                  domain={[0, activeTab === 'lampada' ? 350 : (activeTab === 'led_vermelho' ? 40 : 32)]} 
-                  ticks={activeTab === 'lampada' ? [0, 50, 100, 150, 200, 250, 300, 350] : (activeTab === 'led_vermelho' ? [0, 10, 20, 30, 40] : [0, 8, 16, 24, 32])}
+                  domain={[0, chartScales[activeTab].y.max]} 
+                  ticks={chartScales[activeTab].y.ticks}
                   stroke="#000000"
                   fontSize={14}
                   fontWeight="900"
@@ -1340,20 +1371,20 @@ export default function App() {
         <div ref={lampChartRef} style={{ width: '1000px', height: '800px', backgroundColor: '#ffffff', padding: '60px' }}>
           <ScatterChart width={880} height={680} margin={{ top: 40, right: 40, left: 80, bottom: 100 }}>
             {/* Millimeter Paper Grid */}
-            {Array.from({ length: 31 }).map((_, i) => <ReferenceLine key={`mx-${i}`} x={i * 0.04} stroke="#f1f5f9" strokeWidth={0.5} isAnimationActive={false} />)}
-            {Array.from({ length: 36 }).map((_, i) => <ReferenceLine key={`my-${i}`} y={i * 10} stroke="#f1f5f9" strokeWidth={0.5} isAnimationActive={false} />)}
+            {chartScales.lampada.x.minorTicks.map(x => <ReferenceLine key={`mx-${x}`} x={x} stroke="#f1f5f9" strokeWidth={0.5} isAnimationActive={false} />)}
+            {chartScales.lampada.y.minorTicks.map(y => <ReferenceLine key={`my-${y}`} y={y} stroke="#f1f5f9" strokeWidth={0.5} isAnimationActive={false} />)}
+            {chartScales.lampada.x.ticks.map(v => <ReferenceLine key={`v-${v}`} x={v} stroke="#94a3b8" strokeWidth={1} isAnimationActive={false} />)}
+            {chartScales.lampada.y.ticks.map(h => <ReferenceLine key={`h-${h}`} y={h} stroke="#94a3b8" strokeWidth={1} isAnimationActive={false} />)}
             
-            {[0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2].map(v => <ReferenceLine key={`v-${v}`} x={v} stroke="#94a3b8" strokeWidth={1} isAnimationActive={false} />)}
-            {[0, 50, 100, 150, 200, 250, 300, 350].map(h => <ReferenceLine key={`h-${h}`} y={h} stroke="#94a3b8" strokeWidth={1} isAnimationActive={false} />)}
             <XAxis 
-              type="number" dataKey="x" domain={[0, 1.2]} ticks={[0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2]} stroke="#000000" fontSize={18} fontWeight="900"
+              type="number" dataKey="x" domain={[0, chartScales.lampada.x.max]} ticks={chartScales.lampada.x.ticks} stroke="#000000" fontSize={18} fontWeight="900"
               tick={{ fill: '#000000', fontWeight: '900' }}
               label={{ value: 'tensão (V)', position: 'bottom', offset: 40, fontSize: 20, fontWeight: '900', fill: '#000000' }}
               isAnimationActive={false} axisLine={{ strokeWidth: 4 }} tickLine={{ strokeWidth: 3 }}
               height={80}
             />
             <YAxis 
-              type="number" dataKey="y" domain={[0, 350]} ticks={[0, 50, 100, 150, 200, 250, 300, 350]} stroke="#000000" fontSize={18} fontWeight="900"
+              type="number" dataKey="y" domain={[0, chartScales.lampada.y.max]} ticks={chartScales.lampada.y.ticks} stroke="#000000" fontSize={18} fontWeight="900"
               tick={{ fill: '#000000', fontWeight: '900' }}
               label={{ value: 'corrente (mA)', angle: -90, position: 'insideLeft', offset: 20, fontSize: 20, fontWeight: '900', fill: '#000000' }}
               isAnimationActive={false} axisLine={{ strokeWidth: 4 }} tickLine={{ strokeWidth: 3 }}
@@ -1379,20 +1410,20 @@ export default function App() {
         <div ref={ledVermelhoChartRef} style={{ width: '1000px', height: '800px', backgroundColor: '#ffffff', padding: '60px' }}>
           <ScatterChart width={880} height={680} margin={{ top: 40, right: 40, left: 80, bottom: 100 }}>
             {/* Millimeter Paper Grid */}
-            {Array.from({ length: 31 }).map((_, i) => <ReferenceLine key={`mx-${i}`} x={i * 0.2} stroke="#f1f5f9" strokeWidth={0.5} isAnimationActive={false} />)}
-            {Array.from({ length: 21 }).map((_, i) => <ReferenceLine key={`my-${i}`} y={i * 2} stroke="#f1f5f9" strokeWidth={0.5} isAnimationActive={false} />)}
+            {chartScales.led_vermelho.x.minorTicks.map(x => <ReferenceLine key={`mx-${x}`} x={x} stroke="#f1f5f9" strokeWidth={0.5} isAnimationActive={false} />)}
+            {chartScales.led_vermelho.y.minorTicks.map(y => <ReferenceLine key={`my-${y}`} y={y} stroke="#f1f5f9" strokeWidth={0.5} isAnimationActive={false} />)}
+            {chartScales.led_vermelho.x.ticks.map(v => <ReferenceLine key={`v-${v}`} x={v} stroke="#94a3b8" strokeWidth={1} isAnimationActive={false} />)}
+            {chartScales.led_vermelho.y.ticks.map(h => <ReferenceLine key={`h-${h}`} y={h} stroke="#94a3b8" strokeWidth={1} isAnimationActive={false} />)}
             
-            {[0, 1, 2, 3, 4, 5, 6].map(v => <ReferenceLine key={`v-${v}`} x={v} stroke="#94a3b8" strokeWidth={1} isAnimationActive={false} />)}
-            {[0, 10, 20, 30, 40].map(h => <ReferenceLine key={`h-${h}`} y={h} stroke="#94a3b8" strokeWidth={1} isAnimationActive={false} />)}
             <XAxis 
-              type="number" dataKey="x" domain={[0, 6]} ticks={[0, 1, 2, 3, 4, 5, 6]} stroke="#000000" fontSize={18} fontWeight="900"
+              type="number" dataKey="x" domain={[0, chartScales.led_vermelho.x.max]} ticks={chartScales.led_vermelho.x.ticks} stroke="#000000" fontSize={18} fontWeight="900"
               tick={{ fill: '#000000', fontWeight: '900' }}
               label={{ value: 'tensão (V)', position: 'bottom', offset: 40, fontSize: 20, fontWeight: '900', fill: '#000000' }}
               isAnimationActive={false} axisLine={{ strokeWidth: 4 }} tickLine={{ strokeWidth: 3 }}
               height={80}
             />
             <YAxis 
-              type="number" dataKey="y" domain={[0, 40]} ticks={[0, 10, 20, 30, 40]} stroke="#000000" fontSize={18} fontWeight="900"
+              type="number" dataKey="y" domain={[0, chartScales.led_vermelho.y.max]} ticks={chartScales.led_vermelho.y.ticks} stroke="#000000" fontSize={18} fontWeight="900"
               tick={{ fill: '#000000', fontWeight: '900' }}
               label={{ value: 'corrente (mA)', angle: -90, position: 'insideLeft', offset: 20, fontSize: 20, fontWeight: '900', fill: '#000000' }}
               isAnimationActive={false} axisLine={{ strokeWidth: 4 }} tickLine={{ strokeWidth: 3 }}
@@ -1418,20 +1449,20 @@ export default function App() {
         <div ref={ledVerdeChartRef} style={{ width: '1000px', height: '800px', backgroundColor: '#ffffff', padding: '60px' }}>
           <ScatterChart width={880} height={680} margin={{ top: 40, right: 40, left: 80, bottom: 100 }}>
             {/* Millimeter Paper Grid */}
-            {Array.from({ length: 31 }).map((_, i) => <ReferenceLine key={`mx-${i}`} x={i * 0.1} stroke="#f1f5f9" strokeWidth={0.5} isAnimationActive={false} />)}
-            {Array.from({ length: 17 }).map((_, i) => <ReferenceLine key={`my-${i}`} y={i * 2} stroke="#f1f5f9" strokeWidth={0.5} isAnimationActive={false} />)}
+            {chartScales.led_verde.x.minorTicks.map(x => <ReferenceLine key={`mx-${x}`} x={x} stroke="#f1f5f9" strokeWidth={0.5} isAnimationActive={false} />)}
+            {chartScales.led_verde.y.minorTicks.map(y => <ReferenceLine key={`my-${y}`} y={y} stroke="#f1f5f9" strokeWidth={0.5} isAnimationActive={false} />)}
+            {chartScales.led_verde.x.ticks.map(v => <ReferenceLine key={`v-${v}`} x={v} stroke="#94a3b8" strokeWidth={1} isAnimationActive={false} />)}
+            {chartScales.led_verde.y.ticks.map(h => <ReferenceLine key={`h-${h}`} y={h} stroke="#94a3b8" strokeWidth={1} isAnimationActive={false} />)}
             
-            {[0, 0.5, 1, 1.5, 2, 2.5, 3].map(v => <ReferenceLine key={`v-${v}`} x={v} stroke="#94a3b8" strokeWidth={1} isAnimationActive={false} />)}
-            {[0, 8, 16, 24, 32].map(h => <ReferenceLine key={`h-${h}`} y={h} stroke="#94a3b8" strokeWidth={1} isAnimationActive={false} />)}
             <XAxis 
-              type="number" dataKey="x" domain={[0, 3]} ticks={[0, 0.5, 1, 1.5, 2, 2.5, 3]} stroke="#000000" fontSize={18} fontWeight="900"
+              type="number" dataKey="x" domain={[0, chartScales.led_verde.x.max]} ticks={chartScales.led_verde.x.ticks} stroke="#000000" fontSize={18} fontWeight="900"
               tick={{ fill: '#000000', fontWeight: '900' }}
               label={{ value: 'tensão (V)', position: 'bottom', offset: 40, fontSize: 20, fontWeight: '900', fill: '#000000' }}
               isAnimationActive={false} axisLine={{ strokeWidth: 4 }} tickLine={{ strokeWidth: 3 }}
               height={80}
             />
             <YAxis 
-              type="number" dataKey="y" domain={[0, 32]} ticks={[0, 8, 16, 24, 32]} stroke="#000000" fontSize={18} fontWeight="900"
+              type="number" dataKey="y" domain={[0, chartScales.led_verde.y.max]} ticks={chartScales.led_verde.y.ticks} stroke="#000000" fontSize={18} fontWeight="900"
               tick={{ fill: '#000000', fontWeight: '900' }}
               label={{ value: 'corrente (mA)', angle: -90, position: 'insideLeft', offset: 20, fontSize: 20, fontWeight: '900', fill: '#000000' }}
               isAnimationActive={false} axisLine={{ strokeWidth: 4 }} tickLine={{ strokeWidth: 3 }}
