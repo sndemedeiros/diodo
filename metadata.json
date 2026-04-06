@@ -1,0 +1,5 @@
+{
+  "name": "Laboratório de Física: Elementos não-Ôhmicos",
+  "description": "Aplicativo para coleta de dados, geração de gráficos e análise dos experimentos com Lâmpada e LED (Atividades 1 e 3).",
+  "requestFramePermissions": []
+}
