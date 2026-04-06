@@ -108,13 +108,17 @@ export default function App() {
   const [ledVerdeRedoHistory, setLedVerdeRedoHistory] = useState<{ points: { x: number, y: number }[], color: string }[][]>([]);
   const [ledVermelhoRedoHistory, setLedVermelhoRedoHistory] = useState<{ points: { x: number, y: number }[], color: string }[][]>([]);
   const [mousePos, setMousePos] = useState<{ x: number, y: number, clientX: number, clientY: number } | null>(null);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   // Dynamic Scales Calculation
   const chartScales = useMemo(() => {
-    const calcScale = (val: number, def: number, divisions: number) => {
+    const calcScale = (val: number, def: number, divisions: number, hasData: boolean) => {
+      if (!hasData) {
+        return { max: def, ticks: [], minorTicks: [] };
+      }
       const currentMax = Math.max(val, def);
       const s = currentMax / divisions;
-      const exponent = Math.floor(Math.log10(s));
+      const exponent = Math.floor(Math.log10(s || 1));
       const fraction = s / Math.pow(10, exponent);
       let niceFraction;
       if (fraction <= 1) niceFraction = 1;
@@ -140,21 +144,31 @@ export default function App() {
       return { max: niceMax, ticks, minorTicks };
     };
 
-    const lampX = calcScale(Math.max(...lampData.map(d => d.voltage || 0), 0), 1.2, 6);
-    const lampY = calcScale(Math.max(...lampData.map(d => d.current || 0), 0), 350, 7);
+    const getMax = (data: DataPoint[], lines: { points: { x: number, y: number }[] }[], axis: 'x' | 'y') => {
+      const dataMax = Math.max(...data.map(d => (axis === 'x' ? d.voltage : d.current) || 0), 0);
+      const linesMax = Math.max(...lines.flatMap(l => l.points.map(p => (axis === 'x' ? p.x : p.y))), 0);
+      return Math.max(dataMax, linesMax);
+    };
+
+    const hasAnyData = (data: DataPoint[], lines: any[]) => {
+      return data.some(d => d.voltage !== undefined || d.current !== undefined) || lines.length > 0;
+    };
+
+    const lampX = calcScale(getMax(lampData, lampLines, 'x'), 0.1, 6, hasAnyData(lampData, lampLines));
+    const lampY = calcScale(getMax(lampData, lampLines, 'y'), 10, 7, hasAnyData(lampData, lampLines));
     
-    const ledRedX = calcScale(Math.max(...ledVermelhoData.map(d => d.voltage || 0), 0), 6, 6);
-    const ledRedY = calcScale(Math.max(...ledVermelhoData.map(d => d.current || 0), 0), 40, 4);
+    const ledRedX = calcScale(getMax(ledVermelhoData, ledVermelhoLines, 'x'), 0.1, 6, hasAnyData(ledVermelhoData, ledVermelhoLines));
+    const ledRedY = calcScale(getMax(ledVermelhoData, ledVermelhoLines, 'y'), 1, 4, hasAnyData(ledVermelhoData, ledVermelhoLines));
     
-    const ledGreenX = calcScale(Math.max(...ledVerdeData.map(d => d.voltage || 0), 0), 3, 6);
-    const ledGreenY = calcScale(Math.max(...ledVerdeData.map(d => d.current || 0), 0), 32, 4);
+    const ledGreenX = calcScale(getMax(ledVerdeData, ledVerdeLines, 'x'), 0.1, 6, hasAnyData(ledVerdeData, ledVerdeLines));
+    const ledGreenY = calcScale(getMax(ledVerdeData, ledVerdeLines, 'y'), 1, 4, hasAnyData(ledVerdeData, ledVerdeLines));
 
     return {
       lampada: { x: lampX, y: lampY },
       led_vermelho: { x: ledRedX, y: ledRedY },
       led_verde: { x: ledGreenX, y: ledGreenY }
     };
-  }, [lampData, ledVermelhoData, ledVerdeData]);
+  }, [lampData, ledVermelhoData, ledVerdeData, lampLines, ledVermelhoLines, ledVerdeLines]);
 
   // Analysis text
   const [analysisText, setAnalysisText] = useState('');
@@ -291,6 +305,8 @@ export default function App() {
     setManualHistory(prev => [...prev, drawnLines]);
     setRedoHistory([]);
     setDrawnLines([]);
+    // Also clear experimental data if user wants to clear the "graph"
+    setCurrentData([]);
   };
 
   const generatePDF = async () => {
@@ -321,8 +337,8 @@ export default function App() {
           await new Promise(resolve => setTimeout(resolve, 2000));
           
           const dataUrl = await toPng(el, {
-            width: 1000,
-            height: 800,
+            width: 1200,
+            height: 900,
             pixelRatio: 2,
             backgroundColor: '#ffffff',
             cacheBust: true,
@@ -398,7 +414,7 @@ export default function App() {
       await new Promise(resolve => setTimeout(resolve, 500));
 
       const canvas = await html2canvas(element, {
-        scale: 1.5, // Reduced scale to keep file size under 10MB
+        scale: 2, // Increased scale for better quality
         useCORS: true,
         logging: false,
         backgroundColor: '#ffffff',
@@ -502,6 +518,28 @@ export default function App() {
 
   const clearCurrentData = () => {
     setCurrentData([]);
+  };
+
+  const resetAll = () => {
+    setLampData([]);
+    setLedVerdeData([]);
+    setLedVermelhoData([]);
+    setLampLines([]);
+    setLedVerdeLines([]);
+    setLedVermelhoLines([]);
+    setLampHistory([]);
+    setLedVerdeHistory([]);
+    setLedVermelhoHistory([]);
+    setLampRedoHistory([]);
+    setLedVerdeRedoHistory([]);
+    setLedVermelhoRedoHistory([]);
+    setTurma('');
+    setProfessor('');
+    setComponentes(['']);
+    setAnalysisText('');
+    setLedUnifiedQuestions({ q1: '', q2: '' });
+    setCurrentStep('capa');
+    setShowResetConfirm(false);
   };
 
   // Handlers for Group Info
@@ -805,14 +843,53 @@ export default function App() {
           </div>
           <div className="h-8 w-px bg-slate-200 hidden lg:block" />
           <button 
-            onClick={clearCurrentData}
-            className="p-2.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
-            title="Limpar Dados"
+            onClick={() => setShowResetConfirm(true)}
+            className="p-2.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
+            title="Reiniciar Experimento (Limpa Tudo)"
           >
             <RotateCcw size={20} />
           </button>
+          <div className="h-8 w-px bg-slate-200 hidden lg:block" />
+          <button 
+            onClick={clearCurrentData}
+            className="p-2.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all"
+            title="Limpar Dados da Tabela"
+          >
+            <Eraser size={20} />
+          </button>
         </div>
       </header>
+
+      {/* Reset Confirmation Modal */}
+      {showResetConfirm && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="bg-white rounded-[2rem] shadow-2xl max-w-md w-full p-8 space-y-6 animate-in zoom-in-95 duration-300">
+            <div className="w-16 h-16 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center mx-auto">
+              <RotateCcw size={32} />
+            </div>
+            <div className="text-center space-y-2">
+              <h3 className="text-2xl font-black text-slate-900">Reiniciar Experimento?</h3>
+              <p className="text-slate-500 font-medium">
+                Isso irá apagar <strong>todos</strong> os dados, desenhos e informações do grupo. Esta ação não pode ser desfeita.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button 
+                onClick={() => setShowResetConfirm(false)}
+                className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-xl font-bold hover:bg-slate-200 transition-all"
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={resetAll}
+                className="flex-1 py-4 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 shadow-lg shadow-red-100 transition-all"
+              >
+                Sim, Reiniciar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <main className="max-w-4xl mx-auto p-4 md:p-8 space-y-12 pb-32 print:hidden">
         {/* Experiment Selector Tabs - More integrated */}
@@ -1121,8 +1198,8 @@ export default function App() {
           </div>
 
           <div className="h-[500px] md:h-[700px] bg-white rounded-3xl border border-slate-100 relative overflow-hidden cursor-crosshair shadow-inner group">
-            <ResponsiveContainer width="100%" height="100%" key={activeTab}>
-              <ScatterChart margin={{ top: 40, right: 40, left: 20, bottom: 40 }}>
+            <ResponsiveContainer width="100%" height="100%" key={`${activeTab}-${chartScales[activeTab].x.max}-${chartScales[activeTab].y.max}`}>
+              <ScatterChart margin={{ top: 40, right: 40, left: 80, bottom: 80 }}>
                 {/* Millimeter Paper Grid */}
                 {(() => {
                   const currentScale = chartScales[activeTab];
@@ -1163,7 +1240,7 @@ export default function App() {
                   fontSize={14}
                   fontWeight="900"
                   tick={{ fill: '#000000', fontWeight: '900' }}
-                  label={{ value: 'corrente (mA)', angle: -90, position: 'insideLeft', offset: 10, fontSize: 14, fontWeight: '900', fill: '#000000' }}
+                  label={{ value: 'corrente (mA)', angle: -90, position: 'left', offset: 40, fontSize: 14, fontWeight: '900', fill: '#000000' }}
                   isAnimationActive={false}
                   axisLine={{ strokeWidth: 3 }}
                   tickLine={{ strokeWidth: 2 }}
@@ -1368,8 +1445,8 @@ export default function App() {
       </main>
 
       <div style={{ position: 'fixed', left: '-10000px', top: 0, pointerEvents: 'none', visibility: 'visible', opacity: 1 }}>
-        <div ref={lampChartRef} style={{ width: '1000px', height: '800px', backgroundColor: '#ffffff', padding: '60px' }}>
-          <ScatterChart width={880} height={680} margin={{ top: 40, right: 40, left: 80, bottom: 100 }}>
+        <div ref={lampChartRef} key={`pdf-lamp-${chartScales.lampada.x.max}-${chartScales.lampada.y.max}`} style={{ width: '1200px', height: '900px', backgroundColor: '#ffffff', padding: '60px' }}>
+          <ScatterChart width={1080} height={780} margin={{ top: 40, right: 40, left: 120, bottom: 100 }}>
             {/* Millimeter Paper Grid */}
             {chartScales.lampada.x.minorTicks.map(x => <ReferenceLine key={`mx-${x}`} x={x} stroke="#f1f5f9" strokeWidth={0.5} isAnimationActive={false} />)}
             {chartScales.lampada.y.minorTicks.map(y => <ReferenceLine key={`my-${y}`} y={y} stroke="#f1f5f9" strokeWidth={0.5} isAnimationActive={false} />)}
@@ -1386,12 +1463,13 @@ export default function App() {
             <YAxis 
               type="number" dataKey="y" domain={[0, chartScales.lampada.y.max]} ticks={chartScales.lampada.y.ticks} stroke="#000000" fontSize={18} fontWeight="900"
               tick={{ fill: '#000000', fontWeight: '900' }}
-              label={{ value: 'corrente (mA)', angle: -90, position: 'insideLeft', offset: 20, fontSize: 20, fontWeight: '900', fill: '#000000' }}
+              label={{ value: 'corrente (mA)', angle: -90, position: 'left', offset: 80, fontSize: 24, fontWeight: '900', fill: '#000000' }}
               isAnimationActive={false} axisLine={{ strokeWidth: 4 }} tickLine={{ strokeWidth: 3 }}
             />
             <ReferenceLine x={0} stroke="#000" strokeWidth={4} isAnimationActive={false} />
             <ReferenceLine y={0} stroke="#000" strokeWidth={4} isAnimationActive={false} />
             <Scatter data={[{ x: 0, y: 0 }]} fill="transparent" isAnimationActive={false} />
+            
             {lampLines.map((line, idx) => (
               <Scatter 
                 key={idx} 
@@ -1407,8 +1485,8 @@ export default function App() {
             ))}
           </ScatterChart>
         </div>
-        <div ref={ledVermelhoChartRef} style={{ width: '1000px', height: '800px', backgroundColor: '#ffffff', padding: '60px' }}>
-          <ScatterChart width={880} height={680} margin={{ top: 40, right: 40, left: 80, bottom: 100 }}>
+        <div ref={ledVermelhoChartRef} key={`pdf-red-${chartScales.led_vermelho.x.max}-${chartScales.led_vermelho.y.max}`} style={{ width: '1200px', height: '900px', backgroundColor: '#ffffff', padding: '60px' }}>
+          <ScatterChart width={1080} height={780} margin={{ top: 40, right: 40, left: 120, bottom: 100 }}>
             {/* Millimeter Paper Grid */}
             {chartScales.led_vermelho.x.minorTicks.map(x => <ReferenceLine key={`mx-${x}`} x={x} stroke="#f1f5f9" strokeWidth={0.5} isAnimationActive={false} />)}
             {chartScales.led_vermelho.y.minorTicks.map(y => <ReferenceLine key={`my-${y}`} y={y} stroke="#f1f5f9" strokeWidth={0.5} isAnimationActive={false} />)}
@@ -1425,12 +1503,13 @@ export default function App() {
             <YAxis 
               type="number" dataKey="y" domain={[0, chartScales.led_vermelho.y.max]} ticks={chartScales.led_vermelho.y.ticks} stroke="#000000" fontSize={18} fontWeight="900"
               tick={{ fill: '#000000', fontWeight: '900' }}
-              label={{ value: 'corrente (mA)', angle: -90, position: 'insideLeft', offset: 20, fontSize: 20, fontWeight: '900', fill: '#000000' }}
+              label={{ value: 'corrente (mA)', angle: -90, position: 'left', offset: 80, fontSize: 24, fontWeight: '900', fill: '#000000' }}
               isAnimationActive={false} axisLine={{ strokeWidth: 4 }} tickLine={{ strokeWidth: 3 }}
             />
             <ReferenceLine x={0} stroke="#000" strokeWidth={4} isAnimationActive={false} />
             <ReferenceLine y={0} stroke="#000" strokeWidth={4} isAnimationActive={false} />
             <Scatter data={[{ x: 0, y: 0 }]} fill="transparent" isAnimationActive={false} />
+            
             {ledVermelhoLines.map((line, idx) => (
               <Scatter 
                 key={idx} 
@@ -1446,8 +1525,8 @@ export default function App() {
             ))}
           </ScatterChart>
         </div>
-        <div ref={ledVerdeChartRef} style={{ width: '1000px', height: '800px', backgroundColor: '#ffffff', padding: '60px' }}>
-          <ScatterChart width={880} height={680} margin={{ top: 40, right: 40, left: 80, bottom: 100 }}>
+        <div ref={ledVerdeChartRef} key={`pdf-green-${chartScales.led_verde.x.max}-${chartScales.led_verde.y.max}`} style={{ width: '1200px', height: '900px', backgroundColor: '#ffffff', padding: '60px' }}>
+          <ScatterChart width={1080} height={780} margin={{ top: 40, right: 40, left: 120, bottom: 100 }}>
             {/* Millimeter Paper Grid */}
             {chartScales.led_verde.x.minorTicks.map(x => <ReferenceLine key={`mx-${x}`} x={x} stroke="#f1f5f9" strokeWidth={0.5} isAnimationActive={false} />)}
             {chartScales.led_verde.y.minorTicks.map(y => <ReferenceLine key={`my-${y}`} y={y} stroke="#f1f5f9" strokeWidth={0.5} isAnimationActive={false} />)}
@@ -1464,12 +1543,13 @@ export default function App() {
             <YAxis 
               type="number" dataKey="y" domain={[0, chartScales.led_verde.y.max]} ticks={chartScales.led_verde.y.ticks} stroke="#000000" fontSize={18} fontWeight="900"
               tick={{ fill: '#000000', fontWeight: '900' }}
-              label={{ value: 'corrente (mA)', angle: -90, position: 'insideLeft', offset: 20, fontSize: 20, fontWeight: '900', fill: '#000000' }}
+              label={{ value: 'corrente (mA)', angle: -90, position: 'left', offset: 80, fontSize: 24, fontWeight: '900', fill: '#000000' }}
               isAnimationActive={false} axisLine={{ strokeWidth: 4 }} tickLine={{ strokeWidth: 3 }}
             />
             <ReferenceLine x={0} stroke="#000" strokeWidth={4} isAnimationActive={false} />
             <ReferenceLine y={0} stroke="#000" strokeWidth={4} isAnimationActive={false} />
             <Scatter data={[{ x: 0, y: 0 }]} fill="transparent" isAnimationActive={false} />
+            
             {ledVerdeLines.map((line, idx) => (
               <Scatter 
                 key={idx} 
@@ -1495,55 +1575,116 @@ export default function App() {
         style={{ color: '#0f172a', backgroundColor: '#ffffff', width: '210mm' }}
         className="hidden print:flex flex-col font-sans min-h-screen"
       >
-        {/* Page 1: Cover */}
-        <div className="h-[297mm] flex flex-col items-center justify-center p-16 relative overflow-hidden" style={{ borderBottom: '8px solid #2563eb', backgroundColor: '#ffffff' }}>
-          <div className="max-w-4xl w-full space-y-16 text-center">
-            <header className="space-y-3">
-              <h2 className="text-sm font-bold tracking-[0.3em] uppercase" style={{ color: '#0f172a' }}>
-                Universidade Federal do Rio Grande do Norte
-              </h2>
-              <h3 className="text-xs font-bold tracking-[0.2em] uppercase" style={{ color: '#475569' }}>
-                Centro de Ciências Exatas e da Terra
-              </h3>
-              <div className="w-12 h-px mx-auto" style={{ backgroundColor: '#e2e8f0' }} />
-              <h4 className="text-xs font-semibold tracking-[0.2em] uppercase" style={{ color: '#94a3b8' }}>
-                Departamento de Física Teórica e Experimental
-              </h4>
-            </header>
-
-            <div className="flex justify-center">
-              <div className="w-24 h-24 rounded-[2rem] flex items-center justify-center" style={{ backgroundColor: '#2563eb', color: '#ffffff', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)' }}>
-                <Zap size={48} />
+        {/* Page 1: Capa Profissional */}
+        <div className="p-24 flex flex-col justify-between min-h-[297mm] relative overflow-hidden" style={{ backgroundColor: '#ffffff' }}>
+          {/* Decorative Elements */}
+          <div className="absolute top-0 right-0 w-64 h-64 bg-blue-50 rounded-full -mr-32 -mt-32 opacity-50" />
+          <div className="absolute bottom-0 left-0 w-96 h-96 bg-slate-50 rounded-full -ml-48 -mb-48 opacity-50" />
+          
+          <div className="space-y-12 relative z-10">
+            <div className="flex items-center gap-6">
+              <div className="w-20 h-20 bg-blue-600 rounded-3xl flex items-center justify-center shadow-xl shadow-blue-100">
+                <Zap size={40} className="text-white" />
+              </div>
+              <div className="space-y-1">
+                <h1 className="text-4xl font-black tracking-tighter" style={{ color: '#0f172a' }}>Laboratório de Física</h1>
+                <p className="text-sm font-bold uppercase tracking-[0.4em]" style={{ color: '#94a3b8' }}>UFRN • Departamento de Física</p>
               </div>
             </div>
 
-            <div className="space-y-6 py-12">
-              <div className="space-y-2">
-                <span className="font-bold tracking-[0.25em] uppercase text-xs" style={{ color: '#2563eb' }}>
-                  Experimento IV
-                </span>
-                <h1 className="text-7xl font-black leading-[1.1] tracking-tight" style={{ color: '#0f172a' }}>
-                  Elementos<br />
-                  não-Ôhmicos
-                </h1>
-              </div>
-              <p className="max-w-xl mx-auto text-lg font-medium leading-relaxed" style={{ color: '#64748b' }}>
+            <div className="pt-24 space-y-6">
+              <h2 className="text-6xl font-black leading-[1.1] tracking-tight" style={{ color: '#0f172a' }}>
                 Relatório de Prática Experimental
+              </h2>
+              <div className="h-2 w-32 bg-blue-600 rounded-full" />
+              <p className="text-2xl font-medium max-w-2xl" style={{ color: '#64748b' }}>
+                Estudo de Componentes Não-Ôhmicos: Lâmpada de Tungstênio e Diodos Emissores de Luz (LEDs)
               </p>
             </div>
+          </div>
 
-            <div className="pt-12 space-y-4">
-              <div className="inline-block px-8 py-4 rounded-2xl border" style={{ backgroundColor: '#f8fafc', borderColor: '#f1f5f9' }}>
-                <p className="text-sm font-bold uppercase tracking-widest mb-1" style={{ color: '#94a3b8' }}>Turma</p>
-                <p className="text-xl font-black" style={{ color: '#0f172a' }}>{turma || '---'}</p>
+          <div className="space-y-12 relative z-10">
+            <div className="grid grid-cols-2 gap-12">
+              <div className="space-y-3">
+                <p className="text-xs font-bold uppercase tracking-[0.3em]" style={{ color: '#94a3b8' }}>Identificação da Turma</p>
+                <p className="text-4xl font-black" style={{ color: '#2563eb' }}>{turma || '---'}</p>
               </div>
+              <div className="space-y-3">
+                <p className="text-xs font-bold uppercase tracking-[0.3em]" style={{ color: '#94a3b8' }}>Professor Responsável</p>
+                <p className="text-2xl font-bold" style={{ color: '#0f172a' }}>{professor || '---'}</p>
+              </div>
+            </div>
+
+            <div className="pt-12 border-t-2 flex justify-between items-end" style={{ borderColor: '#f1f5f9' }}>
+              <div className="space-y-1">
+                <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: '#94a3b8' }}>Local e Data</p>
+                <p className="text-sm font-bold" style={{ color: '#475569' }}>Natal, RN • {new Date().toLocaleDateString('pt-BR')}</p>
+              </div>
+              <p className="text-[10px] font-black uppercase tracking-[0.5em]" style={{ color: '#cbd5e1' }}>Física Experimental II</p>
             </div>
           </div>
         </div>
 
-        {/* Page 2: Identification & Experiment 1 */}
-        <div className="p-16 space-y-12 min-h-[297mm]" style={{ backgroundColor: '#ffffff' }}>
-          <div className="space-y-8 border-b pb-8" style={{ borderColor: '#e2e8f0' }}>
+        {/* Page 2: Roteiro Experimental */}
+        <div className="p-20 space-y-12 min-h-[297mm]" style={{ backgroundColor: '#ffffff' }}>
+          <div className="space-y-8">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-slate-900 rounded-2xl flex items-center justify-center">
+                <BookOpen size={24} className="text-white" />
+              </div>
+              <h2 className="text-3xl font-black tracking-tight" style={{ color: '#0f172a' }}>Roteiro Experimental</h2>
+            </div>
+
+            <div className="grid grid-cols-1 gap-10">
+              <section className="space-y-4">
+                <h3 className="text-sm font-black uppercase tracking-widest border-b-2 pb-2" style={{ color: '#2563eb', borderColor: '#dbeafe' }}>1. Objetivos</h3>
+                <ul className="text-sm space-y-3 list-disc pl-5 leading-relaxed" style={{ color: '#334155' }}>
+                  <li>Levantar as curvas características I vs V para componentes não-ôhmicos (Lâmpada e LEDs).</li>
+                  <li>Identificar a resistência a frio e a variação térmica em filamentos de tungstênio.</li>
+                  <li>Determinar a tensão de limiar (Vᵧ) em LEDs de diferentes cores (Verde e Vermelho).</li>
+                  <li>Analisar o comportamento da resistência dinâmica e a natureza não-linear desses dispositivos.</li>
+                </ul>
+              </section>
+
+              <section className="space-y-4">
+                <h3 className="text-sm font-black uppercase tracking-widest border-b-2 pb-2" style={{ color: '#2563eb', borderColor: '#dbeafe' }}>2. Materiais Utilizados</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <ul className="text-sm space-y-2 list-disc pl-5" style={{ color: '#334155' }}>
+                    <li>Fonte de tensão DC variável (0-12V)</li>
+                    <li>Multímetros Digitais (Amperímetro/Voltímetro)</li>
+                  </ul>
+                  <ul className="text-sm space-y-2 list-disc pl-5" style={{ color: '#334155' }}>
+                    <li>Resistor de proteção (27 Ω)</li>
+                    <li>Lâmpada e LEDs (Verde e Vermelho)</li>
+                  </ul>
+                </div>
+              </section>
+
+              <section className="space-y-4">
+                <h3 className="text-sm font-black uppercase tracking-widest border-b-2 pb-2" style={{ color: '#2563eb', borderColor: '#dbeafe' }}>3. Fundamentação Teórica</h3>
+                <div className="text-sm leading-relaxed space-y-4" style={{ color: '#334155' }}>
+                  <p>
+                    <strong>Lâmpada de Tungstênio:</strong> O filamento de uma lâmpada é um condutor metálico cuja resistência aumenta significativamente com a temperatura devido ao efeito Joule. Esse comportamento é descrito pela relação R(T) = R₀ [1 + α(T - T₀)], onde α é o coeficiente de variação térmica.
+                  </p>
+                  <p>
+                    <strong>Diodos (LEDs):</strong> São dispositivos semicondutores que permitem a passagem de corrente apenas em um sentido e acima de uma tensão mínima, chamada tensão de limiar. Diferente dos resistores, sua relação I vs V é exponencial, tornando-os componentes fortemente não-ôhmicos.
+                  </p>
+                </div>
+              </section>
+
+              <section className="space-y-4">
+                <h3 className="text-sm font-black uppercase tracking-widest border-b-2 pb-2" style={{ color: '#2563eb', borderColor: '#dbeafe' }}>4. Procedimento</h3>
+                <p className="text-sm leading-relaxed" style={{ color: '#334155' }}>
+                  O experimento consiste em variar a tensão da fonte e medir a corrente correspondente para cada componente. Os dados são organizados em tabelas e utilizados para construir os gráficos característicos, permitindo a análise visual e matemática do comportamento de cada dispositivo.
+                </p>
+              </section>
+            </div>
+          </div>
+        </div>
+
+        {/* Page 3: Identification & Experiment 1 */}
+        <div className="p-20 space-y-12 min-h-[297mm]" style={{ backgroundColor: '#ffffff' }}>
+          <div className="space-y-8 border-b-2 pb-8" style={{ borderColor: '#f1f5f9' }}>
             <h2 className="text-2xl font-black uppercase tracking-widest" style={{ color: '#2563eb' }}>Identificação do Grupo</h2>
             <div className="grid grid-cols-2 gap-x-12 gap-y-6">
               <div className="space-y-1">
@@ -1573,44 +1714,45 @@ export default function App() {
           <section className="space-y-8">
             <h2 className="text-2xl font-black border-b-4 pb-2" style={{ borderColor: '#3b82f6', color: '#0f172a' }}>Experimento 1: Lâmpada de Tungstênio</h2>
             
-            <div className="grid grid-cols-2 gap-8">
+            <div className="grid grid-cols-1 gap-12">
               <div className="space-y-4">
                 <h3 className="font-bold text-sm uppercase tracking-wider" style={{ color: '#94a3b8' }}>Dados Coletados</h3>
-                <table className="w-full border-collapse border text-xs" style={{ borderColor: '#cbd5e1' }}>
+                <table className="w-full border-collapse border-2 text-sm" style={{ borderColor: '#cbd5e1' }}>
                   <thead>
                     <tr style={{ backgroundColor: '#f1f5f9' }}>
-                      <th className="border p-2" style={{ borderColor: '#cbd5e1', color: '#475569' }}>tensão (V)</th>
-                      <th className="border p-2" style={{ borderColor: '#cbd5e1', color: '#475569' }}>corrente (mA)</th>
+                      <th className="border-2 p-3" style={{ borderColor: '#cbd5e1', color: '#475569' }}>tensão (V)</th>
+                      <th className="border-2 p-3" style={{ borderColor: '#cbd5e1', color: '#475569' }}>corrente (mA)</th>
                     </tr>
                   </thead>
                   <tbody>
                     {lampData.map((d, i) => (
                       <tr key={i}>
-                        <td className="border p-2 text-center" style={{ borderColor: '#cbd5e1', color: '#1e293b' }}>{d.voltage}</td>
-                        <td className="border p-2 text-center" style={{ borderColor: '#cbd5e1', color: '#1e293b' }}>{d.current}</td>
+                        <td className="border-2 p-3 text-center font-medium" style={{ borderColor: '#cbd5e1', color: '#1e293b' }}>{d.voltage}</td>
+                        <td className="border-2 p-3 text-center font-medium" style={{ borderColor: '#cbd5e1', color: '#1e293b' }}>{d.current}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
               <div className="space-y-6">
-                <div className="p-4 rounded-2xl border space-y-2" style={{ backgroundColor: '#f8fafc', borderColor: '#f1f5f9' }}>
-                  <h3 className="font-bold text-[10px] uppercase tracking-wider" style={{ color: '#94a3b8' }}>Parâmetros e Resultados</h3>
-                  <p className="text-sm" style={{ color: '#1e293b' }}>Resistência a Frio (R₀): <strong>{lampRT} Ω</strong></p>
-                  <p className="text-sm" style={{ color: '#1e293b' }}>Coeficiente (α): <strong>{alpha} °C⁻¹</strong></p>
-                  <p className="text-sm" style={{ color: '#1e293b' }}>Temperatura Inicial (T₀): <strong>{tempIni} °C</strong></p>
-                  <div className="h-px my-2" style={{ backgroundColor: '#e2e8f0' }} />
-                  <p className="text-sm" style={{ color: '#1e293b' }}>Resistência Máxima: <strong>{maxResistance} Ω</strong></p>
-                  <p className="text-sm" style={{ color: '#1e293b' }}>Temperatura Máxima: <strong>{maxTemperature} °C</strong></p>
+                <div className="p-8 rounded-[2rem] border-2 space-y-4 shadow-sm" style={{ backgroundColor: '#f8fafc', borderColor: '#f1f5f9' }}>
+                  <h3 className="font-bold text-xs uppercase tracking-widest" style={{ color: '#94a3b8' }}>Parâmetros e Resultados</h3>
+                  <div className="grid grid-cols-2 gap-6">
+                    <p className="text-base" style={{ color: '#1e293b' }}>Resistência a Frio (R₀): <strong className="text-blue-600">{lampRT} Ω</strong></p>
+                    <p className="text-base" style={{ color: '#1e293b' }}>Coeficiente (α): <strong className="text-blue-600">{alpha} °C⁻¹</strong></p>
+                    <p className="text-base" style={{ color: '#1e293b' }}>Temperatura Inicial (T₀): <strong className="text-blue-600">{tempIni} °C</strong></p>
+                    <p className="text-base" style={{ color: '#1e293b' }}>Resistência Máxima: <strong className="text-blue-600">{maxResistance} Ω</strong></p>
+                    <p className="text-base col-span-2" style={{ color: '#1e293b' }}>Temperatura Máxima Atingida: <strong className="text-blue-600 text-xl">{maxTemperature} °C</strong></p>
+                  </div>
                 </div>
               </div>
             </div>
 
             <div className="space-y-4">
               <h3 className="font-bold text-sm uppercase tracking-wider" style={{ color: '#94a3b8' }}>Gráfico Característico (V x I)</h3>
-              <div className="w-full h-[300px] border rounded-2xl p-4 flex justify-center items-center" style={{ backgroundColor: '#ffffff', borderColor: '#e2e8f0' }}>
+              <div className="w-full h-[500px] border rounded-3xl p-6 flex justify-center items-center shadow-sm" style={{ backgroundColor: '#ffffff', borderColor: '#e2e8f0' }}>
                 {lampChartImg ? (
-                  <img src={lampChartImg} alt="Gráfico Lâmpada" className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
+                  <img src={lampChartImg} alt="Gráfico Lâmpada" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
                 ) : (
                   <div className="italic text-sm" style={{ color: '#cbd5e1' }}>Carregando gráfico...</div>
                 )}
@@ -1625,26 +1767,26 @@ export default function App() {
           </section>
         </div>
 
-        {/* Page 3: LED Vermelho */}
-        <div className="p-16 space-y-12 min-h-[297mm]" style={{ backgroundColor: '#ffffff' }}>
+        {/* Page 4: LED Vermelho */}
+        <div className="p-20 space-y-12 min-h-[297mm]" style={{ backgroundColor: '#ffffff' }}>
           <section className="space-y-8">
             <h2 className="text-2xl font-black border-b-4 pb-2" style={{ borderColor: '#ef4444', color: '#0f172a' }}>Experimento 2: LED Vermelho</h2>
             
-            <div className="grid grid-cols-2 gap-8">
+            <div className="grid grid-cols-1 gap-12">
               <div className="space-y-4">
                 <h3 className="font-bold text-sm uppercase tracking-wider" style={{ color: '#94a3b8' }}>Dados Coletados</h3>
-                <table className="w-full border-collapse border text-xs" style={{ borderColor: '#cbd5e1' }}>
+                <table className="w-full border-collapse border-2 text-sm" style={{ borderColor: '#cbd5e1' }}>
                   <thead>
                     <tr style={{ backgroundColor: '#fef2f2' }}>
-                      <th className="border p-2" style={{ borderColor: '#cbd5e1', color: '#b91c1c' }}>tensão (V)</th>
-                      <th className="border p-2" style={{ borderColor: '#cbd5e1', color: '#b91c1c' }}>corrente (mA)</th>
+                      <th className="border-2 p-3" style={{ borderColor: '#cbd5e1', color: '#b91c1c' }}>tensão (V)</th>
+                      <th className="border-2 p-3" style={{ borderColor: '#cbd5e1', color: '#b91c1c' }}>corrente (mA)</th>
                     </tr>
                   </thead>
                   <tbody>
                     {ledVermelhoData.map((d, i) => (
                       <tr key={i}>
-                        <td className="border p-2 text-center" style={{ borderColor: '#cbd5e1', color: '#1e293b' }}>{d.voltage}</td>
-                        <td className="border p-2 text-center" style={{ borderColor: '#cbd5e1', color: '#1e293b' }}>{d.current}</td>
+                        <td className="border-2 p-3 text-center font-medium" style={{ borderColor: '#cbd5e1', color: '#1e293b' }}>{d.voltage}</td>
+                        <td className="border-2 p-3 text-center font-medium" style={{ borderColor: '#cbd5e1', color: '#1e293b' }}>{d.current}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1652,9 +1794,9 @@ export default function App() {
               </div>
               <div className="space-y-4">
               <h3 className="font-bold text-sm uppercase tracking-wider" style={{ color: '#94a3b8' }}>Gráfico Característico</h3>
-              <div className="w-full h-[300px] border rounded-2xl p-4 flex justify-center items-center" style={{ backgroundColor: '#ffffff', borderColor: '#e2e8f0' }}>
+              <div className="w-full h-[500px] border rounded-3xl p-6 flex justify-center items-center shadow-sm" style={{ backgroundColor: '#ffffff', borderColor: '#e2e8f0' }}>
                 {ledVermelhoChartImg ? (
-                  <img src={ledVermelhoChartImg} alt="Gráfico LED Vermelho" className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
+                  <img src={ledVermelhoChartImg} alt="Gráfico LED Vermelho" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
                 ) : (
                   <div className="italic text-sm" style={{ color: '#cbd5e1' }}>Carregando gráfico...</div>
                 )}
@@ -1664,26 +1806,26 @@ export default function App() {
         </section>
       </div>
 
-        {/* Page 4: LED Verde & Comparação */}
-        <div className="p-16 space-y-12 min-h-[297mm]" style={{ backgroundColor: '#ffffff' }}>
+        {/* Page 5: LED Verde & Comparação */}
+        <div className="p-20 space-y-12 min-h-[297mm]" style={{ backgroundColor: '#ffffff' }}>
           <section className="space-y-8">
             <h2 className="text-2xl font-black border-b-4 pb-2" style={{ borderColor: '#22c55e', color: '#0f172a' }}>Experimento 2: LED Verde</h2>
             
-            <div className="grid grid-cols-2 gap-8">
+            <div className="grid grid-cols-1 gap-12">
               <div className="space-y-4">
                 <h3 className="font-bold text-sm uppercase tracking-wider" style={{ color: '#94a3b8' }}>Dados Coletados</h3>
-                <table className="w-full border-collapse border text-xs" style={{ borderColor: '#cbd5e1' }}>
+                <table className="w-full border-collapse border-2 text-sm" style={{ borderColor: '#cbd5e1' }}>
                   <thead>
                     <tr style={{ backgroundColor: '#f0fdf4' }}>
-                      <th className="border p-2" style={{ borderColor: '#cbd5e1', color: '#15803d' }}>tensão (V)</th>
-                      <th className="border p-2" style={{ borderColor: '#cbd5e1', color: '#15803d' }}>corrente (mA)</th>
+                      <th className="border-2 p-3" style={{ borderColor: '#cbd5e1', color: '#15803d' }}>tensão (V)</th>
+                      <th className="border-2 p-3" style={{ borderColor: '#cbd5e1', color: '#15803d' }}>corrente (mA)</th>
                     </tr>
                   </thead>
                   <tbody>
                     {ledVerdeData.map((d, i) => (
                       <tr key={i}>
-                        <td className="border p-2 text-center" style={{ borderColor: '#cbd5e1', color: '#1e293b' }}>{d.voltage}</td>
-                        <td className="border p-2 text-center" style={{ borderColor: '#cbd5e1', color: '#1e293b' }}>{d.current}</td>
+                        <td className="border-2 p-3 text-center font-medium" style={{ borderColor: '#cbd5e1', color: '#1e293b' }}>{d.voltage}</td>
+                        <td className="border-2 p-3 text-center font-medium" style={{ borderColor: '#cbd5e1', color: '#1e293b' }}>{d.current}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1691,9 +1833,9 @@ export default function App() {
               </div>
               <div className="space-y-4">
               <h3 className="font-bold text-sm uppercase tracking-wider" style={{ color: '#94a3b8' }}>Gráfico Característico</h3>
-              <div className="w-full h-[300px] border rounded-2xl p-4 flex justify-center items-center" style={{ backgroundColor: '#ffffff', borderColor: '#e2e8f0' }}>
+              <div className="w-full h-[500px] border rounded-3xl p-6 flex justify-center items-center shadow-sm" style={{ backgroundColor: '#ffffff', borderColor: '#e2e8f0' }}>
                 {ledVerdeChartImg ? (
-                  <img src={ledVerdeChartImg} alt="Gráfico LED Verde" className="max-w-full max-h-full object-contain" referrerPolicy="no-referrer" />
+                  <img src={ledVerdeChartImg} alt="Gráfico LED Verde" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
                 ) : (
                   <div className="italic text-sm" style={{ color: '#cbd5e1' }}>Carregando gráfico...</div>
                 )}
