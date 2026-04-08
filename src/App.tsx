@@ -403,41 +403,19 @@ export default function App() {
         // Small delay to ensure each page is fully rendered
         await new Promise(resolve => setTimeout(resolve, 600));
         
-        const canvas = await html2canvas(page, {
-          scale: 2,
-          useCORS: true,
-          allowTaint: true,
+        // Use toPng instead of html2canvas for better oklch support
+        const imgData = await toPng(page, {
+          pixelRatio: 2,
           backgroundColor: '#ffffff',
-          logging: false,
-          onclone: (clonedDoc) => {
-            // Aggressive oklch replacement in cloned document
-            const styleTags = clonedDoc.getElementsByTagName('style');
-            for (let j = 0; j < styleTags.length; j++) {
-              styleTags[j].innerHTML = styleTags[j].innerHTML.replace(/oklch\([^)]+\)/g, '#cccccc');
-            }
-            
-            const allElements = clonedDoc.getElementsByTagName('*');
-            for (let j = 0; j < allElements.length; j++) {
-              const el = allElements[j] as HTMLElement;
-              
-              // Fix inline styles
-              const style = el.getAttribute('style');
-              if (style && style.includes('oklch')) {
-                el.setAttribute('style', style.replace(/oklch\([^)]+\)/g, '#cccccc'));
-              }
-              
-              // Force background color for pages in clone
-              if (el.classList.contains('pdf-page')) {
-                el.style.backgroundColor = '#ffffff';
-                el.style.display = 'block';
-              }
-            }
+          style: {
+            display: 'block',
+            visibility: 'visible',
+            opacity: '1'
           }
         });
 
-        const imgData = canvas.toDataURL('image/jpeg', 0.95);
         if (i > 0) pdf.addPage();
-        pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
+        pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
       }
 
       // Restore original styles
