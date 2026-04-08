@@ -107,7 +107,6 @@ export default function App() {
   const [lampRedoHistory, setLampRedoHistory] = useState<{ points: { x: number, y: number }[], color: string }[][]>([]);
   const [ledVerdeRedoHistory, setLedVerdeRedoHistory] = useState<{ points: { x: number, y: number }[], color: string }[][]>([]);
   const [ledVermelhoRedoHistory, setLedVermelhoRedoHistory] = useState<{ points: { x: number, y: number }[], color: string }[][]>([]);
-  const [mousePos, setMousePos] = useState<{ x: number, y: number, clientX: number, clientY: number } | null>(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   // Dynamic Scales Calculation
@@ -201,11 +200,11 @@ export default function App() {
 
   const getPointFromEvent = (e: React.MouseEvent | React.TouchEvent) => {
     const rect = e.currentTarget.getBoundingClientRect();
-    // Adjusted paddings to match Recharts margins + axis space
-    const paddingLeft = 70; 
+    // Adjusted paddings to match Recharts margins exactly
+    const paddingLeft = 80; 
     const paddingRight = 40;
     const paddingTop = 40;
-    const paddingBottom = 65;
+    const paddingBottom = 80;
     
     const width = rect.width - paddingLeft - paddingRight;
     const height = rect.height - paddingTop - paddingBottom;
@@ -256,11 +255,6 @@ export default function App() {
 
   const handleMouseMove = (e: React.MouseEvent) => {
     const point = getPointFromEvent(e);
-    if (point) {
-      setMousePos({ ...point, clientX: e.clientX, clientY: e.clientY });
-    } else {
-      setMousePos(null);
-    }
 
     if (isDrawing && activeTool === 'line') {
       if (point) {
@@ -280,7 +274,6 @@ export default function App() {
 
   const handleMouseUp = () => {
     setIsDrawing(false);
-    setMousePos(null);
   };
 
   const undoManualAction = () => {
@@ -315,15 +308,21 @@ export default function App() {
     }
 
     setIsGeneratingPDF(true);
+    console.log("Iniciando geração do PDF...");
     
     try {
-      // 1. Capture the visible charts from the UI first using toPng (better for SVGs)
-      const captureChart = async (ref: React.RefObject<HTMLDivElement>) => {
-        if (!ref.current) return null;
+      // 1. Capture the visible charts from the UI first using toPng
+      const captureChart = async (ref: React.RefObject<HTMLDivElement>, name: string) => {
+        if (!ref.current) {
+          console.warn(`Ref para ${name} não encontrada.`);
+          return null;
+        }
         try {
-          // Temporarily bring the chart to the visible area for better capture
+          console.log(`Capturando gráfico: ${name}`);
           const el = ref.current;
           const originalStyle = el.style.cssText;
+          
+          // Ensure element is visible for capture
           el.style.position = 'fixed';
           el.style.left = '0';
           el.style.top = '0';
@@ -333,7 +332,7 @@ export default function App() {
           el.style.display = 'block';
           el.style.backgroundColor = '#ffffff';
 
-          // Wait for Recharts to stabilize and render everything
+          // Wait for Recharts to stabilize
           await new Promise(resolve => setTimeout(resolve, 2000));
           
           const dataUrl = await toPng(el, {
@@ -342,92 +341,64 @@ export default function App() {
             pixelRatio: 2,
             backgroundColor: '#ffffff',
             cacheBust: true,
-            style: {
-              opacity: '1',
-              visibility: 'visible',
-              display: 'block'
-            }
           });
 
           el.style.cssText = originalStyle;
+          console.log(`Gráfico ${name} capturado com sucesso.`);
           return dataUrl;
         } catch (err) {
-          console.error("Error capturing chart:", err);
+          console.error(`Erro ao capturar gráfico ${name}:`, err);
           return null;
         }
       };
 
-      const lImg = await captureChart(lampChartRef);
-      const rvImg = await captureChart(ledVermelhoChartRef);
-      const gImg = await captureChart(ledVerdeChartRef);
+      const lImg = await captureChart(lampChartRef, "Lâmpada");
+      const rvImg = await captureChart(ledVermelhoChartRef, "LED Vermelho");
+      const gImg = await captureChart(ledVerdeChartRef, "LED Verde");
 
       setLampChartImg(lImg);
       setLedVermelhoChartImg(rvImg);
       setLedVerdeChartImg(gImg);
 
       // 2. Wait for the report to update with the new images
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
       if (!reportRef.current) {
+        console.error("Referência do relatório não encontrada.");
         setIsGeneratingPDF(false);
         return;
       }
 
       const element = reportRef.current;
+      console.log("Capturando relatório completo com html2canvas...");
       
-      // Store original styles
-      const originalStyles = {
-        position: element.style.position,
-        left: element.style.left,
-        top: element.style.top,
-        width: element.style.width,
-        display: element.style.display,
-        zIndex: element.style.zIndex,
-        opacity: element.style.opacity,
-        visibility: element.style.visibility,
-        pointerEvents: element.style.pointerEvents
-      };
+      // Temporary style for capture
+      const originalDisplay = element.style.display;
+      const originalPosition = element.style.position;
+      const originalLeft = element.style.left;
+      const originalVisibility = element.style.visibility;
+      const originalOpacity = element.style.opacity;
 
-      // Make it visible but off-screen
-      element.style.display = 'flex'; 
-      element.style.position = 'fixed';
-      element.style.top = '0';
-      element.style.left = '0'; 
-      element.style.width = '210mm';
-      element.style.zIndex = '-1000'; 
-      element.style.opacity = '1';
+      element.style.display = 'flex';
+      element.style.position = 'relative';
+      element.style.left = '0';
       element.style.visibility = 'visible';
-      element.style.pointerEvents = 'none';
-      element.classList.remove('hidden');
-
-      // 3. Wait for all images in the report to be fully loaded
-      const images = element.getElementsByTagName('img');
-      const imagePromises = Array.from(images).map(img => {
-        const image = img as HTMLImageElement;
-        if (image.complete) return Promise.resolve();
-        return new Promise(resolve => {
-          image.onload = resolve;
-          image.onerror = resolve; // Continue even if one fails
-        });
-      });
-      await Promise.all(imagePromises);
-      await new Promise(resolve => setTimeout(resolve, 500));
+      element.style.opacity = '1';
 
       const canvas = await html2canvas(element, {
-        scale: 2, // Increased scale for better quality
+        scale: 2,
         useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff',
         allowTaint: true,
-        scrollX: 0,
-        scrollY: 0,
+        backgroundColor: '#ffffff',
+        logging: true,
         onclone: (clonedDoc) => {
           const clonedElement = clonedDoc.getElementById('report-container');
           if (clonedElement) {
-            clonedElement.style.left = '0';
             clonedElement.style.display = 'flex';
             clonedElement.style.visibility = 'visible';
             clonedElement.style.opacity = '1';
+            clonedElement.style.position = 'relative';
+            clonedElement.style.left = '0';
           }
 
           // Aggressive oklch replacement safety net in stylesheets
@@ -458,48 +429,45 @@ export default function App() {
         }
       });
 
-      // Restore original styles
-      Object.assign(element.style, originalStyles);
-      element.classList.add('hidden');
+      // Restore styles
+      element.style.display = originalDisplay;
+      element.style.position = originalPosition;
+      element.style.left = originalLeft;
+      element.style.visibility = originalVisibility;
+      element.style.opacity = originalOpacity;
 
-      // Use JPEG with 0.8 quality to keep file size under 10MB
-      const imgData = canvas.toDataURL('image/jpeg', 0.8);
+      console.log("Canvas gerado, criando PDF...");
+      const imgData = canvas.toDataURL('image/jpeg', 0.9);
       const pdf = new jsPDF('p', 'mm', 'a4');
       
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const pdfHeight = pdf.internal.pageSize.getHeight();
-      
       const canvasWidth = canvas.width;
       const canvasHeight = canvas.height;
-      
       const pageHeightInCanvas = (canvasWidth * pdfHeight) / pdfWidth;
       const totalPages = Math.ceil(canvasHeight / pageHeightInCanvas);
 
       for (let i = 0; i < totalPages; i++) {
-        if (i > 0) {
-          pdf.addPage();
-        }
-        
+        if (i > 0) pdf.addPage();
         pdf.addImage(
           imgData, 
           'JPEG', 
           0, 
           -(i * pdfHeight), 
           pdfWidth, 
-          (canvasHeight * pdfWidth) / canvasWidth,
-          undefined,
+          (canvasHeight * pdfWidth) / canvasWidth, 
+          undefined, 
           'FAST'
         );
       }
 
-      pdf.save(`Relatorio_Experimento_${turma || 'Fisica'}.pdf`);
+      pdf.save(`Relatorio_Fisica_${turma || 'UFRN'}.pdf`);
+      console.log("PDF salvo com sucesso.");
     } catch (error) {
-      console.error('Erro ao gerar PDF:', error);
+      console.error("Erro fatal na geração do PDF:", error);
+      alert("Ocorreu um erro ao gerar o PDF. Por favor, tente novamente.");
     } finally {
       setIsGeneratingPDF(false);
-      setLampChartImg(null);
-      setLedVermelhoChartImg(null);
-      setLedVerdeChartImg(null);
     }
   };
 
@@ -1197,7 +1165,7 @@ export default function App() {
             </div>
           </div>
 
-          <div className="h-[500px] md:h-[700px] bg-white rounded-3xl border border-slate-100 relative overflow-hidden cursor-crosshair shadow-inner group">
+          <div className="h-[500px] md:h-[700px] bg-white rounded-3xl border border-slate-100 relative overflow-hidden cursor-default shadow-inner group">
             <ResponsiveContainer width="100%" height="100%" key={`${activeTab}-${chartScales[activeTab].x.max}-${chartScales[activeTab].y.max}`}>
               <ScatterChart margin={{ top: 40, right: 40, left: 80, bottom: 80 }}>
                 {/* Millimeter Paper Grid */}
@@ -1251,6 +1219,24 @@ export default function App() {
                 {/* Dummy point to force grid rendering when no data exists */}
                 <Scatter data={[{ x: 0, y: 0 }]} fill="transparent" isAnimationActive={false} />
                 
+                {/* Automatic points from table */}
+                <Scatter 
+                  key={`auto-points-${activeTab}`}
+                  name="Dados Experimentais" 
+                  data={currentData
+                    .filter(p => 
+                      typeof p.voltage === 'number' && !isNaN(p.voltage) && 
+                      typeof p.current === 'number' && !isNaN(p.current)
+                    )
+                    .map(p => ({ x: p.voltage, y: p.current }))} 
+                  fill="#0f172a" 
+                  shape={(props: any) => {
+                    const { cx, cy } = props;
+                    return <circle cx={cx} cy={cy} r={5} fill="#0f172a" stroke="none" />;
+                  }}
+                  isAnimationActive={false}
+                />
+                
                 {drawnLines.map((line, idx) => (
                   <Scatter 
                     key={idx} 
@@ -1273,9 +1259,6 @@ export default function App() {
               onMouseLeave={handleMouseUp}
               onTouchStart={(e) => {
                 const point = getPointFromEvent(e);
-                if (point) {
-                  setMousePos({ ...point, clientX: e.touches[0].clientX, clientY: e.touches[0].clientY });
-                }
                 if (!point) return;
                 
                 e.preventDefault();
@@ -1299,9 +1282,6 @@ export default function App() {
               }}
               onTouchMove={(e) => {
                 const point = getPointFromEvent(e);
-                if (point) {
-                  setMousePos({ ...point, clientX: e.touches[0].clientX, clientY: e.touches[0].clientY });
-                }
                 if (isDrawing && activeTool === 'line') {
                   if (point) {
                     e.preventDefault();
@@ -1320,19 +1300,10 @@ export default function App() {
               }}
               onTouchEnd={() => {
                 setIsDrawing(false);
-                setMousePos(null);
               }}
             />
 
-            {/* Custom Tooltip that follows mouse */}
-            {mousePos && (
-              <div 
-                className="fixed pointer-events-none bg-slate-900/90 text-white px-2 py-1 rounded-md shadow-xl text-[10px] font-black z-[100] transform -translate-x-1/2 -translate-y-full mb-2"
-                style={{ left: mousePos.clientX, top: mousePos.clientY }}
-              >
-                {mousePos.x}V | {mousePos.y}mA
-              </div>
-            )}
+            {/* Custom Tooltip removed */}
           </div>
           
           <div className="flex flex-col sm:flex-row items-center justify-end gap-4 px-2">
@@ -1470,6 +1441,22 @@ export default function App() {
             <ReferenceLine y={0} stroke="#000" strokeWidth={4} isAnimationActive={false} />
             <Scatter data={[{ x: 0, y: 0 }]} fill="transparent" isAnimationActive={false} />
             
+            {/* Automatic points from table */}
+            <Scatter 
+              data={lampData
+                .filter(p => 
+                  typeof p.voltage === 'number' && !isNaN(p.voltage) && 
+                  typeof p.current === 'number' && !isNaN(p.current)
+                )
+                .map(p => ({ x: p.voltage, y: p.current }))} 
+              fill="#0f172a" 
+              shape={(props: any) => {
+                const { cx, cy, fill } = props;
+                return <circle cx={cx} cy={cy} r={6} fill={fill} stroke="none" />;
+              }}
+              isAnimationActive={false}
+            />
+            
             {lampLines.map((line, idx) => (
               <Scatter 
                 key={idx} 
@@ -1509,6 +1496,22 @@ export default function App() {
             <ReferenceLine x={0} stroke="#000" strokeWidth={4} isAnimationActive={false} />
             <ReferenceLine y={0} stroke="#000" strokeWidth={4} isAnimationActive={false} />
             <Scatter data={[{ x: 0, y: 0 }]} fill="transparent" isAnimationActive={false} />
+            
+            {/* Automatic points from table */}
+            <Scatter 
+              data={ledVermelhoData
+                .filter(p => 
+                  typeof p.voltage === 'number' && !isNaN(p.voltage) && 
+                  typeof p.current === 'number' && !isNaN(p.current)
+                )
+                .map(p => ({ x: p.voltage, y: p.current }))} 
+              fill="#0f172a" 
+              shape={(props: any) => {
+                const { cx, cy, fill } = props;
+                return <circle cx={cx} cy={cy} r={6} fill={fill} stroke="none" />;
+              }}
+              isAnimationActive={false}
+            />
             
             {ledVermelhoLines.map((line, idx) => (
               <Scatter 
@@ -1550,6 +1553,22 @@ export default function App() {
             <ReferenceLine y={0} stroke="#000" strokeWidth={4} isAnimationActive={false} />
             <Scatter data={[{ x: 0, y: 0 }]} fill="transparent" isAnimationActive={false} />
             
+            {/* Automatic points from table */}
+            <Scatter 
+              data={ledVerdeData
+                .filter(p => 
+                  typeof p.voltage === 'number' && !isNaN(p.voltage) && 
+                  typeof p.current === 'number' && !isNaN(p.current)
+                )
+                .map(p => ({ x: p.voltage, y: p.current }))} 
+              fill="#0f172a" 
+              shape={(props: any) => {
+                const { cx, cy, fill } = props;
+                return <circle cx={cx} cy={cy} r={6} fill={fill} stroke="none" />;
+              }}
+              isAnimationActive={false}
+            />
+            
             {ledVerdeLines.map((line, idx) => (
               <Scatter 
                 key={idx} 
@@ -1572,8 +1591,18 @@ export default function App() {
         ref={reportRef}
         id="report-container"
         key={isGeneratingPDF ? 'generating' : 'idle'}
-        style={{ color: '#0f172a', backgroundColor: '#ffffff', width: '210mm' }}
-        className="hidden print:flex flex-col font-sans min-h-screen"
+        style={{ 
+          color: '#0f172a', 
+          backgroundColor: '#ffffff', 
+          width: '210mm',
+          position: 'absolute',
+          left: '-9999px',
+          top: '0',
+          visibility: 'visible',
+          opacity: 0,
+          pointerEvents: 'none'
+        }}
+        className="print:flex flex-col font-sans min-h-screen"
       >
         {/* Page 1: Capa Profissional */}
         <div className="p-24 flex flex-col justify-between min-h-[297mm] relative overflow-hidden" style={{ backgroundColor: '#ffffff' }}>
