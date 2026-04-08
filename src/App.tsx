@@ -311,6 +311,9 @@ export default function App() {
     console.log("Iniciando geração do PDF...");
     
     try {
+      // Small delay to allow UI to update and hidden charts to be ready
+      await new Promise(resolve => setTimeout(resolve, 800));
+
       // 1. Capture the visible charts from the UI first using toPng
       const captureChart = async (ref: React.RefObject<HTMLDivElement>, name: string) => {
         if (!ref.current) {
@@ -320,27 +323,28 @@ export default function App() {
         try {
           console.log(`Capturando gráfico: ${name}`);
           const el = ref.current;
-          const originalStyle = el.style.cssText;
           
-          // Ensure element is visible for capture
+          // Temporary style to ensure it's in the rendering context
+          const originalStyle = el.style.cssText;
           el.style.position = 'fixed';
           el.style.left = '0';
           el.style.top = '0';
-          el.style.zIndex = '9999';
+          el.style.zIndex = '-9999';
           el.style.visibility = 'visible';
           el.style.opacity = '1';
           el.style.display = 'block';
           el.style.backgroundColor = '#ffffff';
 
-          // Wait for Recharts to stabilize
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          // Wait for Recharts to stabilize (longer for the first one or just in general)
+          await new Promise(resolve => setTimeout(resolve, 3000));
           
           const dataUrl = await toPng(el, {
             width: 1200,
             height: 900,
-            pixelRatio: 2,
+            pixelRatio: 1.5,
             backgroundColor: '#ffffff',
             cacheBust: true,
+            skipFonts: true,
           });
 
           el.style.cssText = originalStyle;
@@ -361,111 +365,89 @@ export default function App() {
       setLedVerdeChartImg(gImg);
 
       // 2. Wait for the report to update with the new images
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => setTimeout(resolve, 2000));
 
       if (!reportRef.current) {
-        console.error("Referência do relatório não encontrada.");
-        setIsGeneratingPDF(false);
-        return;
+        throw new Error("Referência do relatório não encontrada.");
       }
 
       const element = reportRef.current;
-      console.log("Capturando relatório completo com html2canvas...");
+      console.log("Capturando relatório completo...");
       
-      // Temporary style for capture
-      const originalDisplay = element.style.display;
-      const originalPosition = element.style.position;
-      const originalLeft = element.style.left;
-      const originalVisibility = element.style.visibility;
-      const originalOpacity = element.style.opacity;
-
-      element.style.display = 'flex';
-      element.style.position = 'relative';
+      // Ensure the element is visible for capture
+      const originalStyle = element.style.cssText;
+      element.style.position = 'fixed';
       element.style.left = '0';
+      element.style.top = '0';
+      element.style.width = '210mm';
       element.style.visibility = 'visible';
       element.style.opacity = '1';
+      element.style.zIndex = '-1'; // Keep it behind the UI
+      element.style.display = 'flex';
+      element.style.flexDirection = 'column';
 
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: '#ffffff',
-        logging: true,
-        onclone: (clonedDoc) => {
-          const clonedElement = clonedDoc.getElementById('report-container');
-          if (clonedElement) {
-            clonedElement.style.display = 'flex';
-            clonedElement.style.visibility = 'visible';
-            clonedElement.style.opacity = '1';
-            clonedElement.style.position = 'relative';
-            clonedElement.style.left = '0';
-          }
+      // Find all pages
+      const pages = element.querySelectorAll('.pdf-page');
+      if (pages.length === 0) {
+        throw new Error("Nenhuma página encontrada no relatório.");
+      }
 
-          // Aggressive oklch replacement safety net in stylesheets
-          const styleTags = clonedDoc.getElementsByTagName('style');
-          for (let i = 0; i < styleTags.length; i++) {
-            styleTags[i].innerHTML = styleTags[i].innerHTML.replace(/oklch\([^)]+\)/g, '#cccccc');
-          }
-
-          const allElements = clonedDoc.getElementsByTagName('*');
-          for (let i = 0; i < allElements.length; i++) {
-            const el = allElements[i] as HTMLElement;
-            
-            // Check inline styles
-            const style = el.getAttribute('style');
-            if (style && style.includes('oklch')) {
-              el.setAttribute('style', style.replace(/oklch\([^)]+\)/g, '#cccccc'));
-            }
-            
-            // Check computed styles for common properties
-            const computedStyle = window.getComputedStyle(el);
-            ['color', 'backgroundColor', 'borderColor', 'stroke', 'fill'].forEach(prop => {
-              const val = (el.style as any)[prop] || computedStyle.getPropertyValue(prop);
-              if (val && val.includes('oklch')) {
-                (el.style as any)[prop] = '#cccccc';
-              }
-            });
-          }
-        }
-      });
-
-      // Restore styles
-      element.style.display = originalDisplay;
-      element.style.position = originalPosition;
-      element.style.left = originalLeft;
-      element.style.visibility = originalVisibility;
-      element.style.opacity = originalOpacity;
-
-      console.log("Canvas gerado, criando PDF...");
-      const imgData = canvas.toDataURL('image/jpeg', 0.9);
       const pdf = new jsPDF('p', 'mm', 'a4');
-      
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const pdfHeight = pdf.internal.pageSize.getHeight();
-      const canvasWidth = canvas.width;
-      const canvasHeight = canvas.height;
-      const pageHeightInCanvas = (canvasWidth * pdfHeight) / pdfWidth;
-      const totalPages = Math.ceil(canvasHeight / pageHeightInCanvas);
 
-      for (let i = 0; i < totalPages; i++) {
+      for (let i = 0; i < pages.length; i++) {
+        console.log(`Capturando página ${i + 1} de ${pages.length}...`);
+        const page = pages[i] as HTMLElement;
+        
+        // Small delay to ensure each page is fully rendered
+        await new Promise(resolve => setTimeout(resolve, 600));
+        
+        const canvas = await html2canvas(page, {
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+          backgroundColor: '#ffffff',
+          logging: false,
+          onclone: (clonedDoc) => {
+            // Aggressive oklch replacement in cloned document
+            const styleTags = clonedDoc.getElementsByTagName('style');
+            for (let j = 0; j < styleTags.length; j++) {
+              styleTags[j].innerHTML = styleTags[j].innerHTML.replace(/oklch\([^)]+\)/g, '#cccccc');
+            }
+            
+            const allElements = clonedDoc.getElementsByTagName('*');
+            for (let j = 0; j < allElements.length; j++) {
+              const el = allElements[j] as HTMLElement;
+              
+              // Fix inline styles
+              const style = el.getAttribute('style');
+              if (style && style.includes('oklch')) {
+                el.setAttribute('style', style.replace(/oklch\([^)]+\)/g, '#cccccc'));
+              }
+              
+              // Force background color for pages in clone
+              if (el.classList.contains('pdf-page')) {
+                el.style.backgroundColor = '#ffffff';
+                el.style.display = 'block';
+              }
+            }
+          }
+        });
+
+        const imgData = canvas.toDataURL('image/jpeg', 0.95);
         if (i > 0) pdf.addPage();
-        pdf.addImage(
-          imgData, 
-          'JPEG', 
-          0, 
-          -(i * pdfHeight), 
-          pdfWidth, 
-          (canvasHeight * pdfWidth) / canvasWidth, 
-          undefined, 
-          'FAST'
-        );
+        pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight, undefined, 'FAST');
       }
+
+      // Restore original styles
+      element.style.cssText = originalStyle;
 
       pdf.save(`Relatorio_Fisica_${turma || 'UFRN'}.pdf`);
       console.log("PDF salvo com sucesso.");
     } catch (error) {
       console.error("Erro fatal na geração do PDF:", error);
-      alert("Ocorreu um erro ao gerar o PDF. Por favor, tente novamente.");
+      alert(`Ocorreu um erro ao gerar o PDF: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
     } finally {
       setIsGeneratingPDF(false);
     }
@@ -1416,7 +1398,7 @@ export default function App() {
       </main>
 
       <div style={{ position: 'fixed', left: '-10000px', top: 0, pointerEvents: 'none', visibility: 'visible', opacity: 1 }}>
-        <div ref={lampChartRef} key={`pdf-lamp-${chartScales.lampada.x.max}-${chartScales.lampada.y.max}`} style={{ width: '1200px', height: '900px', backgroundColor: '#ffffff', padding: '60px' }}>
+        <div ref={lampChartRef} key={`pdf-lamp-${isGeneratingPDF}-${chartScales.lampada.x.max}-${chartScales.lampada.y.max}`} style={{ width: '1200px', height: '900px', backgroundColor: '#ffffff', padding: '60px' }}>
           <ScatterChart width={1080} height={780} margin={{ top: 40, right: 40, left: 120, bottom: 100 }}>
             {/* Millimeter Paper Grid */}
             {chartScales.lampada.x.minorTicks.map(x => <ReferenceLine key={`mx-${x}`} x={x} stroke="#f1f5f9" strokeWidth={0.5} isAnimationActive={false} />)}
@@ -1451,8 +1433,8 @@ export default function App() {
                 .map(p => ({ x: p.voltage, y: p.current }))} 
               fill="#0f172a" 
               shape={(props: any) => {
-                const { cx, cy, fill } = props;
-                return <circle cx={cx} cy={cy} r={6} fill={fill} stroke="none" />;
+                const { cx, cy } = props;
+                return <circle cx={cx} cy={cy} r={6} fill="#0f172a" stroke="none" />;
               }}
               isAnimationActive={false}
             />
@@ -1472,7 +1454,7 @@ export default function App() {
             ))}
           </ScatterChart>
         </div>
-        <div ref={ledVermelhoChartRef} key={`pdf-red-${chartScales.led_vermelho.x.max}-${chartScales.led_vermelho.y.max}`} style={{ width: '1200px', height: '900px', backgroundColor: '#ffffff', padding: '60px' }}>
+        <div ref={ledVermelhoChartRef} key={`pdf-red-${isGeneratingPDF}-${chartScales.led_vermelho.x.max}-${chartScales.led_vermelho.y.max}`} style={{ width: '1200px', height: '900px', backgroundColor: '#ffffff', padding: '60px' }}>
           <ScatterChart width={1080} height={780} margin={{ top: 40, right: 40, left: 120, bottom: 100 }}>
             {/* Millimeter Paper Grid */}
             {chartScales.led_vermelho.x.minorTicks.map(x => <ReferenceLine key={`mx-${x}`} x={x} stroke="#f1f5f9" strokeWidth={0.5} isAnimationActive={false} />)}
@@ -1507,8 +1489,8 @@ export default function App() {
                 .map(p => ({ x: p.voltage, y: p.current }))} 
               fill="#0f172a" 
               shape={(props: any) => {
-                const { cx, cy, fill } = props;
-                return <circle cx={cx} cy={cy} r={6} fill={fill} stroke="none" />;
+                const { cx, cy } = props;
+                return <circle cx={cx} cy={cy} r={6} fill="#0f172a" stroke="none" />;
               }}
               isAnimationActive={false}
             />
@@ -1528,7 +1510,7 @@ export default function App() {
             ))}
           </ScatterChart>
         </div>
-        <div ref={ledVerdeChartRef} key={`pdf-green-${chartScales.led_verde.x.max}-${chartScales.led_verde.y.max}`} style={{ width: '1200px', height: '900px', backgroundColor: '#ffffff', padding: '60px' }}>
+        <div ref={ledVerdeChartRef} key={`pdf-green-${isGeneratingPDF}-${chartScales.led_verde.x.max}-${chartScales.led_verde.y.max}`} style={{ width: '1200px', height: '900px', backgroundColor: '#ffffff', padding: '60px' }}>
           <ScatterChart width={1080} height={780} margin={{ top: 40, right: 40, left: 120, bottom: 100 }}>
             {/* Millimeter Paper Grid */}
             {chartScales.led_verde.x.minorTicks.map(x => <ReferenceLine key={`mx-${x}`} x={x} stroke="#f1f5f9" strokeWidth={0.5} isAnimationActive={false} />)}
@@ -1563,8 +1545,8 @@ export default function App() {
                 .map(p => ({ x: p.voltage, y: p.current }))} 
               fill="#0f172a" 
               shape={(props: any) => {
-                const { cx, cy, fill } = props;
-                return <circle cx={cx} cy={cy} r={6} fill={fill} stroke="none" />;
+                const { cx, cy } = props;
+                return <circle cx={cx} cy={cy} r={6} fill="#0f172a" stroke="none" />;
               }}
               isAnimationActive={false}
             />
@@ -1590,22 +1572,22 @@ export default function App() {
       <div 
         ref={reportRef}
         id="report-container"
-        key={isGeneratingPDF ? 'generating' : 'idle'}
         style={{ 
           color: '#0f172a', 
           backgroundColor: '#ffffff', 
-          width: '210mm',
-          position: 'absolute',
-          left: '-9999px',
+          width: '794px', // A4 width at 96dpi
+          position: 'fixed',
+          left: '-10000px',
           top: '0',
           visibility: 'visible',
-          opacity: 0,
-          pointerEvents: 'none'
+          opacity: 1,
+          pointerEvents: 'none',
+          boxSizing: 'border-box'
         }}
-        className="print:flex flex-col font-sans min-h-screen"
+        className="flex flex-col font-sans"
       >
         {/* Page 1: Capa Profissional */}
-        <div className="p-24 flex flex-col justify-between min-h-[297mm] relative overflow-hidden" style={{ backgroundColor: '#ffffff' }}>
+        <div className="pdf-page p-24 flex flex-col justify-between relative overflow-hidden" style={{ backgroundColor: '#ffffff', width: '210mm', height: '297mm' }}>
           {/* Decorative Elements */}
           <div className="absolute top-0 right-0 w-64 h-64 bg-blue-50 rounded-full -mr-32 -mt-32 opacity-50" />
           <div className="absolute bottom-0 left-0 w-96 h-96 bg-slate-50 rounded-full -ml-48 -mb-48 opacity-50" />
@@ -1655,7 +1637,7 @@ export default function App() {
         </div>
 
         {/* Page 2: Roteiro Experimental */}
-        <div className="p-20 space-y-12 min-h-[297mm]" style={{ backgroundColor: '#ffffff' }}>
+        <div className="pdf-page p-20 space-y-12" style={{ backgroundColor: '#ffffff', width: '210mm', height: '297mm' }}>
           <div className="space-y-8">
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 bg-slate-900 rounded-2xl flex items-center justify-center">
@@ -1707,71 +1689,67 @@ export default function App() {
                   O experimento consiste em variar a tensão da fonte e medir a corrente correspondente para cada componente. Os dados são organizados em tabelas e utilizados para construir os gráficos característicos, permitindo a análise visual e matemática do comportamento de cada dispositivo.
                 </p>
               </section>
+
+              <section className="space-y-8 pt-8 border-t-2" style={{ borderColor: '#f1f5f9' }}>
+                <h2 className="text-xl font-black uppercase tracking-widest" style={{ color: '#2563eb' }}>Identificação do Grupo</h2>
+                <div className="grid grid-cols-2 gap-x-12 gap-y-6">
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: '#94a3b8' }}>Turma</p>
+                    <p className="text-xl font-black" style={{ color: '#0f172a' }}>{turma || '---'}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: '#94a3b8' }}>Professor</p>
+                    <p className="text-xl font-bold" style={{ color: '#1e293b' }}>{professor || '---'}</p>
+                  </div>
+                  <div className="col-span-2 space-y-3">
+                    <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: '#94a3b8' }}>Integrantes</p>
+                    <div className="grid grid-cols-2 gap-3">
+                      {componentes.filter(c => c.trim()).map((c, i) => (
+                        <p key={i} className="text-sm font-bold p-3 rounded-xl border" style={{ color: '#334155', backgroundColor: '#f8fafc', borderColor: '#f1f5f9' }}>{c}</p>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </section>
             </div>
           </div>
         </div>
 
-        {/* Page 3: Identification & Experiment 1 */}
-        <div className="p-20 space-y-12 min-h-[297mm]" style={{ backgroundColor: '#ffffff' }}>
-          <div className="space-y-8 border-b-2 pb-8" style={{ borderColor: '#f1f5f9' }}>
-            <h2 className="text-2xl font-black uppercase tracking-widest" style={{ color: '#2563eb' }}>Identificação do Grupo</h2>
-            <div className="grid grid-cols-2 gap-x-12 gap-y-6">
-              <div className="space-y-1">
-                <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: '#94a3b8' }}>Turma</p>
-                <p className="text-xl font-black" style={{ color: '#0f172a' }}>{turma || '---'}</p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: '#94a3b8' }}>Professor</p>
-                <p className="text-xl font-bold" style={{ color: '#1e293b' }}>{professor || '---'}</p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: '#94a3b8' }}>Data</p>
-                <p className="text-xl font-bold" style={{ color: '#1e293b' }}>{new Date().toLocaleDateString('pt-BR')}</p>
-              </div>
-              <div className="col-span-2 space-y-3">
-                <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: '#94a3b8' }}>Integrantes</p>
-                <div className="grid grid-cols-2 gap-3">
-                  {componentes.filter(c => c.trim()).map((c, i) => (
-                    <p key={i} className="text-sm font-bold p-3 rounded-xl border" style={{ color: '#334155', backgroundColor: '#f8fafc', borderColor: '#f1f5f9' }}>{c}</p>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-
+        {/* Page 3: Experiment 1 */}
+        <div className="pdf-page p-20 space-y-12" style={{ backgroundColor: '#ffffff', width: '210mm', height: '297mm' }}>
           {/* Experiment 1: Lamp */}
           <section className="space-y-8">
             <h2 className="text-2xl font-black border-b-4 pb-2" style={{ borderColor: '#3b82f6', color: '#0f172a' }}>Experimento 1: Lâmpada de Tungstênio</h2>
             
-            <div className="grid grid-cols-1 gap-12">
+            <div className="grid grid-cols-2 gap-8">
               <div className="space-y-4">
                 <h3 className="font-bold text-sm uppercase tracking-wider" style={{ color: '#94a3b8' }}>Dados Coletados</h3>
-                <table className="w-full border-collapse border-2 text-sm" style={{ borderColor: '#cbd5e1' }}>
+                <table className="w-full border-collapse border-2 text-xs" style={{ borderColor: '#cbd5e1' }}>
                   <thead>
                     <tr style={{ backgroundColor: '#f1f5f9' }}>
-                      <th className="border-2 p-3" style={{ borderColor: '#cbd5e1', color: '#475569' }}>tensão (V)</th>
-                      <th className="border-2 p-3" style={{ borderColor: '#cbd5e1', color: '#475569' }}>corrente (mA)</th>
+                      <th className="border-2 p-2" style={{ borderColor: '#cbd5e1', color: '#475569' }}>tensão (V)</th>
+                      <th className="border-2 p-2" style={{ borderColor: '#cbd5e1', color: '#475569' }}>corrente (mA)</th>
                     </tr>
                   </thead>
                   <tbody>
                     {lampData.map((d, i) => (
                       <tr key={i}>
-                        <td className="border-2 p-3 text-center font-medium" style={{ borderColor: '#cbd5e1', color: '#1e293b' }}>{d.voltage}</td>
-                        <td className="border-2 p-3 text-center font-medium" style={{ borderColor: '#cbd5e1', color: '#1e293b' }}>{d.current}</td>
+                        <td className="border-2 p-2 text-center font-medium" style={{ borderColor: '#cbd5e1', color: '#1e293b' }}>{d.voltage}</td>
+                        <td className="border-2 p-2 text-center font-medium" style={{ borderColor: '#cbd5e1', color: '#1e293b' }}>{d.current}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
               <div className="space-y-6">
-                <div className="p-8 rounded-[2rem] border-2 space-y-4 shadow-sm" style={{ backgroundColor: '#f8fafc', borderColor: '#f1f5f9' }}>
+                <div className="p-6 rounded-[2rem] border-2 space-y-4 shadow-sm" style={{ backgroundColor: '#f8fafc', borderColor: '#f1f5f9' }}>
                   <h3 className="font-bold text-xs uppercase tracking-widest" style={{ color: '#94a3b8' }}>Parâmetros e Resultados</h3>
-                  <div className="grid grid-cols-2 gap-6">
-                    <p className="text-base" style={{ color: '#1e293b' }}>Resistência a Frio (R₀): <strong className="text-blue-600">{lampRT} Ω</strong></p>
-                    <p className="text-base" style={{ color: '#1e293b' }}>Coeficiente (α): <strong className="text-blue-600">{alpha} °C⁻¹</strong></p>
-                    <p className="text-base" style={{ color: '#1e293b' }}>Temperatura Inicial (T₀): <strong className="text-blue-600">{tempIni} °C</strong></p>
-                    <p className="text-base" style={{ color: '#1e293b' }}>Resistência Máxima: <strong className="text-blue-600">{maxResistance} Ω</strong></p>
-                    <p className="text-base col-span-2" style={{ color: '#1e293b' }}>Temperatura Máxima Atingida: <strong className="text-blue-600 text-xl">{maxTemperature} °C</strong></p>
+                  <div className="space-y-4">
+                    <p className="text-sm" style={{ color: '#1e293b' }}>Resistência a Frio (R₀): <strong className="text-blue-600">{lampRT} Ω</strong></p>
+                    <p className="text-sm" style={{ color: '#1e293b' }}>Coeficiente (α): <strong className="text-blue-600">{alpha} °C⁻¹</strong></p>
+                    <p className="text-sm" style={{ color: '#1e293b' }}>Temperatura Inicial (T₀): <strong className="text-blue-600">{tempIni} °C</strong></p>
+                    <p className="text-sm" style={{ color: '#1e293b' }}>Resistência Máxima: <strong className="text-blue-600">{maxResistance} Ω</strong></p>
+                    <p className="text-sm" style={{ color: '#1e293b' }}>Temperatura Máxima Atingida: <strong className="text-blue-600 text-lg">{maxTemperature} °C</strong></p>
                   </div>
                 </div>
               </div>
@@ -1779,9 +1757,9 @@ export default function App() {
 
             <div className="space-y-4">
               <h3 className="font-bold text-sm uppercase tracking-wider" style={{ color: '#94a3b8' }}>Gráfico Característico (V x I)</h3>
-              <div className="w-full h-[500px] border rounded-3xl p-6 flex justify-center items-center shadow-sm" style={{ backgroundColor: '#ffffff', borderColor: '#e2e8f0' }}>
+              <div className="w-full h-[450px] border rounded-3xl p-6 flex justify-center items-center shadow-sm" style={{ backgroundColor: '#ffffff', borderColor: '#e2e8f0' }}>
                 {lampChartImg ? (
-                  <img src={lampChartImg} alt="Gráfico Lâmpada" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+                  <img key={lampChartImg.substring(0, 100)} src={lampChartImg} alt="Gráfico Lâmpada" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
                 ) : (
                   <div className="italic text-sm" style={{ color: '#cbd5e1' }}>Carregando gráfico...</div>
                 )}
@@ -1797,80 +1775,80 @@ export default function App() {
         </div>
 
         {/* Page 4: LED Vermelho */}
-        <div className="p-20 space-y-12 min-h-[297mm]" style={{ backgroundColor: '#ffffff' }}>
+        <div className="pdf-page p-20 space-y-12" style={{ backgroundColor: '#ffffff', width: '210mm', height: '297mm' }}>
           <section className="space-y-8">
             <h2 className="text-2xl font-black border-b-4 pb-2" style={{ borderColor: '#ef4444', color: '#0f172a' }}>Experimento 2: LED Vermelho</h2>
             
-            <div className="grid grid-cols-1 gap-12">
+            <div className="grid grid-cols-2 gap-8">
               <div className="space-y-4">
                 <h3 className="font-bold text-sm uppercase tracking-wider" style={{ color: '#94a3b8' }}>Dados Coletados</h3>
-                <table className="w-full border-collapse border-2 text-sm" style={{ borderColor: '#cbd5e1' }}>
+                <table className="w-full border-collapse border-2 text-xs" style={{ borderColor: '#cbd5e1' }}>
                   <thead>
                     <tr style={{ backgroundColor: '#fef2f2' }}>
-                      <th className="border-2 p-3" style={{ borderColor: '#cbd5e1', color: '#b91c1c' }}>tensão (V)</th>
-                      <th className="border-2 p-3" style={{ borderColor: '#cbd5e1', color: '#b91c1c' }}>corrente (mA)</th>
+                      <th className="border-2 p-2" style={{ borderColor: '#cbd5e1', color: '#b91c1c' }}>tensão (V)</th>
+                      <th className="border-2 p-2" style={{ borderColor: '#cbd5e1', color: '#b91c1c' }}>corrente (mA)</th>
                     </tr>
                   </thead>
                   <tbody>
                     {ledVermelhoData.map((d, i) => (
                       <tr key={i}>
-                        <td className="border-2 p-3 text-center font-medium" style={{ borderColor: '#cbd5e1', color: '#1e293b' }}>{d.voltage}</td>
-                        <td className="border-2 p-3 text-center font-medium" style={{ borderColor: '#cbd5e1', color: '#1e293b' }}>{d.current}</td>
+                        <td className="border-2 p-2 text-center font-medium" style={{ borderColor: '#cbd5e1', color: '#1e293b' }}>{d.voltage}</td>
+                        <td className="border-2 p-2 text-center font-medium" style={{ borderColor: '#cbd5e1', color: '#1e293b' }}>{d.current}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
               <div className="space-y-4">
-              <h3 className="font-bold text-sm uppercase tracking-wider" style={{ color: '#94a3b8' }}>Gráfico Característico</h3>
-              <div className="w-full h-[500px] border rounded-3xl p-6 flex justify-center items-center shadow-sm" style={{ backgroundColor: '#ffffff', borderColor: '#e2e8f0' }}>
-                {ledVermelhoChartImg ? (
-                  <img src={ledVermelhoChartImg} alt="Gráfico LED Vermelho" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
-                ) : (
-                  <div className="italic text-sm" style={{ color: '#cbd5e1' }}>Carregando gráfico...</div>
-                )}
+                <h3 className="font-bold text-sm uppercase tracking-wider" style={{ color: '#94a3b8' }}>Gráfico Característico</h3>
+                <div className="w-full h-[450px] border rounded-3xl p-6 flex justify-center items-center shadow-sm" style={{ backgroundColor: '#ffffff', borderColor: '#e2e8f0' }}>
+                  {ledVermelhoChartImg ? (
+                    <img key={ledVermelhoChartImg.substring(0, 100)} src={ledVermelhoChartImg} alt="Gráfico LED Vermelho" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+                  ) : (
+                    <div className="italic text-sm" style={{ color: '#cbd5e1' }}>Carregando gráfico...</div>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
         </section>
       </div>
 
         {/* Page 5: LED Verde & Comparação */}
-        <div className="p-20 space-y-12 min-h-[297mm]" style={{ backgroundColor: '#ffffff' }}>
+        <div className="pdf-page p-20 space-y-12" style={{ backgroundColor: '#ffffff', width: '210mm', height: '297mm' }}>
           <section className="space-y-8">
             <h2 className="text-2xl font-black border-b-4 pb-2" style={{ borderColor: '#22c55e', color: '#0f172a' }}>Experimento 2: LED Verde</h2>
             
-            <div className="grid grid-cols-1 gap-12">
+            <div className="grid grid-cols-2 gap-8">
               <div className="space-y-4">
                 <h3 className="font-bold text-sm uppercase tracking-wider" style={{ color: '#94a3b8' }}>Dados Coletados</h3>
-                <table className="w-full border-collapse border-2 text-sm" style={{ borderColor: '#cbd5e1' }}>
+                <table className="w-full border-collapse border-2 text-xs" style={{ borderColor: '#cbd5e1' }}>
                   <thead>
                     <tr style={{ backgroundColor: '#f0fdf4' }}>
-                      <th className="border-2 p-3" style={{ borderColor: '#cbd5e1', color: '#15803d' }}>tensão (V)</th>
-                      <th className="border-2 p-3" style={{ borderColor: '#cbd5e1', color: '#15803d' }}>corrente (mA)</th>
+                      <th className="border-2 p-2" style={{ borderColor: '#cbd5e1', color: '#15803d' }}>tensão (V)</th>
+                      <th className="border-2 p-2" style={{ borderColor: '#cbd5e1', color: '#15803d' }}>corrente (mA)</th>
                     </tr>
                   </thead>
                   <tbody>
                     {ledVerdeData.map((d, i) => (
                       <tr key={i}>
-                        <td className="border-2 p-3 text-center font-medium" style={{ borderColor: '#cbd5e1', color: '#1e293b' }}>{d.voltage}</td>
-                        <td className="border-2 p-3 text-center font-medium" style={{ borderColor: '#cbd5e1', color: '#1e293b' }}>{d.current}</td>
+                        <td className="border-2 p-2 text-center font-medium" style={{ borderColor: '#cbd5e1', color: '#1e293b' }}>{d.voltage}</td>
+                        <td className="border-2 p-2 text-center font-medium" style={{ borderColor: '#cbd5e1', color: '#1e293b' }}>{d.current}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
               <div className="space-y-4">
-              <h3 className="font-bold text-sm uppercase tracking-wider" style={{ color: '#94a3b8' }}>Gráfico Característico</h3>
-              <div className="w-full h-[500px] border rounded-3xl p-6 flex justify-center items-center shadow-sm" style={{ backgroundColor: '#ffffff', borderColor: '#e2e8f0' }}>
-                {ledVerdeChartImg ? (
-                  <img src={ledVerdeChartImg} alt="Gráfico LED Verde" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
-                ) : (
-                  <div className="italic text-sm" style={{ color: '#cbd5e1' }}>Carregando gráfico...</div>
-                )}
+                <h3 className="font-bold text-sm uppercase tracking-wider" style={{ color: '#94a3b8' }}>Gráfico Característico</h3>
+                <div className="w-full h-[450px] border rounded-3xl p-6 flex justify-center items-center shadow-sm" style={{ backgroundColor: '#ffffff', borderColor: '#e2e8f0' }}>
+                  {ledVerdeChartImg ? (
+                    <img key={ledVerdeChartImg.substring(0, 100)} src={ledVerdeChartImg} alt="Gráfico LED Verde" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+                  ) : (
+                    <div className="italic text-sm" style={{ color: '#cbd5e1' }}>Carregando gráfico...</div>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
         </section>
 
           <section className="space-y-8 pt-12 border-t-4" style={{ borderColor: '#0f172a' }}>
